@@ -1,0 +1,16 @@
+{
+  "files": {
+    "main.css": "/HealthcareAI/static/css/main.2d32bcdf.css",
+    "main.js": "/HealthcareAI/static/js/main.1486e915.js",
+    "static/js/453.2945d692.chunk.js": "/HealthcareAI/static/js/453.2945d692.chunk.js",
+    "static/media/logo.svg": "/HealthcareAI/static/media/logo.6ce24c58023cc2f8fd88fe9d219db6c6.svg",
+    "index.html": "/HealthcareAI/index.html",
+    "main.2d32bcdf.css.map": "/HealthcareAI/static/css/main.2d32bcdf.css.map",
+    "main.1486e915.js.map": "/HealthcareAI/static/js/main.1486e915.js.map",
+    "453.2945d692.chunk.js.map": "/HealthcareAI/static/js/453.2945d692.chunk.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.2d32bcdf.css",
+    "static/js/main.1486e915.js"
+  ]
+}
