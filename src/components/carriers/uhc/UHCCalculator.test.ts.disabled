@@ -1,0 +1,504 @@
+import { UHCRenewalCalculator } from './UHCCalculator';
+import { UHCInput } from '../../../types/uhc';
+import { IMonthlyClaimsData, LargeClaimant } from '../../../types/common';
+
+describe('UHCRenewalCalculator', () => {
+  // Test data setup
+  const createTestClaimsData = (months: number = 12): IMonthlyClaimsData[] => {
+    const data: IMonthlyClaimsData[] = [];
+    const baseDate = new Date('2023-12-01');
+    
+    for (let i = 0; i < months; i++) {
+      const month = new Date(baseDate);
+      month.setMonth(baseDate.getMonth() - i);
+      
+      data.push({
+        month: month.toISOString().split('T')[0],
+        memberMonths: {
+          total: 1000 + (i * 10), // Varying member months
+          medical: 1000 + (i * 10),
+          rx: 1000 + (i * 10) // Fixed property name from pharmacy to rx
+        },
+        incurredClaims: {
+          medical: 350000 + (i * 5000), // $350/PMPM base + growth
+          rx: 85000 + (i * 2000),       // $85/PMPM base + growth
+          total: 435000 + (i * 7000)
+        }
+      });
+    }
+    
+    return data.reverse(); // Oldest first
+  };
+
+  const createTestLargeClaimants = (): LargeClaimant[] => {
+    return [
+      {
+        claimantId: 'LC001',
+        incurredDate: new Date('2023-06-15'),
+        totalAmount: 150000,
+        medicalAmount: 150000,
+        rxAmount: 0,
+        diagnosis: 'Major Surgery' // Changed from description to diagnosis
+      },
+      {
+        claimantId: 'LC002', 
+        incurredDate: new Date('2023-09-20'),
+        totalAmount: 200000,
+        medicalAmount: 180000,
+        rxAmount: 20000,
+        diagnosis: 'Complex Treatment' // Changed from description to diagnosis
+      },
+      {
+        claimantId: 'LC003',
+        incurredDate: new Date('2023-11-10'),
+        totalAmount: 175000,
+        medicalAmount: 175000,
+        rxAmount: 0,
+        diagnosis: 'Emergency Care' // Changed from description to diagnosis
+      }
+    ];
+  };
+
+  const createTestInput = (
+    claimsMonths: number = 24,
+    customParams?: Partial<UHCInput['carrierSpecificParameters']>
+  ): UHCInput => {
+    const monthlyData = createTestClaimsData(claimsMonths);
+    
+    // Calculate values from test data instead of hardcoding
+    const totalMedical = monthlyData.reduce((sum, month) => sum + month.incurredClaims.medical, 0);
+    const totalRx = monthlyData.reduce((sum, month) => sum + month.incurredClaims.rx, 0);
+    const totalMM = monthlyData.reduce((sum, month) => sum + month.memberMonths.total, 0);
+    
+    const experiencePMPM = (totalMedical + totalRx) / totalMM;
+    const calculatedManualPMPM = experiencePMPM * 1.15; // 15% above experience
+    const calculatedCurrentPremium = experiencePMPM * 1.16; // 16% retention
+    
+    // Calculate retention based on group size
+    let totalRetentionPct: number;
+    if (totalMM > 30000) {
+      totalRetentionPct = 12.5; // Large group
+    } else if (totalMM > 10000) {
+      totalRetentionPct = 14.0; // Medium group
+    } else {
+      totalRetentionPct = 15.5; // Small group
+    }
+
+    return {
+      carrier: 'UHC',
+      caseId: 'TEST-CASE-001',
+      monthlyClaimsData: monthlyData,
+      largeClaimantsData: createTestLargeClaimants(),
+      effectiveDates: {
+        renewalStart: new Date('2024-01-01'),
+        renewalEnd: new Date('2024-12-31')
+      },
+      manualRates: {
+        medical: calculatedManualPMPM * 0.75, // Derived split
+        rx: calculatedManualPMPM * 0.25,      // Derived split
+        total: calculatedManualPMPM
+      },
+      carrierSpecificParameters: {
+        poolingThreshold: 125000,
+        poolingFactor: 0.156,
+        underwritingAdjustment: 1.0000,
+        planChangeAdjustment: 1.002,
+        trendRates: {
+          medical: 0.0969, // 9.69% annual
+          rx: 0.0788       // 7.88% annual
+        },
+        projectionMonths: {
+          current: 20,
+          prior: 28
+        },
+        experienceWeights: [0.70, 0.30],
+        credibilityWeights: {
+          experience: 0.42,
+          manual: 0.58
+        },
+        manualRates: {
+          baseManualPMPM: calculatedManualPMPM,
+          ageSexAdjustment: 1.168,
+          otherAdjustment: 1.000
+        },
+        retentionComponents: {
+          administrative: totalRetentionPct * 0.33,
+          taxes: totalRetentionPct * 0.17,
+          commission: 0.0,
+          other: totalRetentionPct * 0.10
+        },
+        memberChangeAdjustment: 1.000,
+        currentRevenuePMPM: calculatedCurrentPremium,
+        reformItems: 0,
+        commission: totalRetentionPct * 0.27,
+        fees: totalRetentionPct * 0.13,
+        // Don't provide suggestedRenewalAction - let it be calculated
+        adjustmentFactors: {
+          other: 1.000
+        },
+        ...customParams
+      }
+    };
+  };
+
+  describe('Full 24-Month Calculation', () => {
+    test('should execute complete Lines A-AM calculation flow', () => {
+      const input = createTestInput();
+      const calculator = new UHCRenewalCalculator(input);
+      const result = calculator.calculate();
+
+      // Verify basic structure
+      expect(result.carrier).toBe('UHC');
+      expect(result.calculations).toHaveLength(39); // Lines A through AM
+      expect(result.periods.current.months).toBe(12);
+      expect(result.periods.prior?.months).toBe(12);
+
+      // Verify all calculation lines are present
+      const lines = [
+        'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R',
+        'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'AA', 'AB', 'AC', 'AD', 'AE', 'AF', 'AG', 'AH', 'AI', 'AJ', 'AK', 'AL', 'AM'
+      ];
+      lines.forEach(line => {
+        const calc = result.calculations.find(c => c.line === line);
+        expect(calc).toBeDefined();
+        expect(calc?.description).toBeTruthy();
+      });
+
+      // Verify final results are reasonable
+      expect(result.finalPremium.total).toBeGreaterThan(0);
+      expect(result.rateChange).toBeDefined();
+      expect(result.summary.credibilityWeighting.credibilityFactor).toBeGreaterThan(0);
+      expect(result.summary.credibilityWeighting.credibilityFactor).toBeLessThanOrEqual(1);
+    });
+
+    test('should correctly calculate Line A (Incurred Medical Claims PMPM)', () => {
+      const input = createTestInput();
+      const calculator = new UHCRenewalCalculator(input);
+      const result = calculator.calculate();
+
+      const lineA = result.calculations.find(c => c.line === 'A');
+      expect(lineA).toBeDefined();
+      
+      // Line A should have medical only (Rx is in Line D)
+      expect(lineA!.current.medical).toBeGreaterThan(0);
+      expect(lineA!.current.rx).toBe(0); // Rx should be 0 for Line A
+      expect(lineA!.current.total).toBe(lineA!.current.medical);
+      
+      // Prior period should also exist for 24-month data
+      expect(lineA!.prior).toBeDefined();
+      expect(lineA!.prior!.total).toBe(lineA!.prior!.medical);
+    });
+
+    test('should correctly calculate Line D (Incurred Rx Claims PMPM)', () => {
+      const input = createTestInput();
+      const calculator = new UHCRenewalCalculator(input);
+      const result = calculator.calculate();
+
+      const lineD = result.calculations.find(c => c.line === 'D');
+      expect(lineD).toBeDefined();
+      
+      // Line D should have Rx only (Medical is in Line A)
+      expect(lineD!.current.medical).toBe(0); // Medical should be 0 for Line D
+      expect(lineD!.current.rx).toBeGreaterThan(0);
+      expect(lineD!.current.total).toBe(lineD!.current.rx);
+      
+      // Prior period should also exist for 24-month data
+      expect(lineD!.prior).toBeDefined();
+      expect(lineD!.prior!.total).toBe(lineD!.prior!.rx);
+    });
+
+    test('should correctly calculate Line B (Pooled Claims) with $125K threshold', () => {
+      const input = createTestInput();
+      const calculator = new UHCRenewalCalculator(input);
+      const result = calculator.calculate();
+
+      const lineB = result.calculations.find(c => c.line === 'B');
+      expect(lineB).toBeDefined();
+      
+      // Should have pooled amounts greater than 0 for large claimants
+      expect(lineB!.current.total).toBeGreaterThanOrEqual(0);
+      expect(lineB!.current.medical).toBeGreaterThanOrEqual(0);
+      expect(lineB!.current.rx).toBe(0); // Pooling typically applies to medical only
+    });
+
+    test('should correctly calculate Line C (Adjusted Medical Claims)', () => {
+      const input = createTestInput();
+      const calculator = new UHCRenewalCalculator(input);
+      const result = calculator.calculate();
+
+      const lineA = result.calculations.find(c => c.line === 'A');
+      const lineB = result.calculations.find(c => c.line === 'B');
+      const lineC = result.calculations.find(c => c.line === 'C');
+      
+      expect(lineA && lineB && lineC).toBeTruthy();
+      
+      // Line C should equal Line A minus Line B (medical only)
+      expect(Math.abs(lineC!.current.medical - (lineA!.current.medical - lineB!.current.medical))).toBeLessThan(0.01);
+      expect(lineC!.current.rx).toBe(0);
+      expect(lineC!.current.total).toBe(lineC!.current.medical);
+    });
+
+    test('should correctly calculate Line E (Total Incurred Claims)', () => {
+      const input = createTestInput();
+      const calculator = new UHCRenewalCalculator(input);
+      const result = calculator.calculate();
+
+      const lineC = result.calculations.find(c => c.line === 'C'); // Adjusted Medical
+      const lineD = result.calculations.find(c => c.line === 'D'); // Rx Claims
+      const lineE = result.calculations.find(c => c.line === 'E'); // Total
+      
+      expect(lineC && lineD && lineE).toBeTruthy();
+      
+      // Line E should equal Line C + Line D
+      expect(Math.abs(lineE!.current.medical - lineC!.current.medical)).toBeLessThan(0.01);
+      expect(Math.abs(lineE!.current.rx - lineD!.current.rx)).toBeLessThan(0.01);
+      expect(Math.abs(lineE!.current.total - (lineC!.current.total + lineD!.current.total))).toBeLessThan(0.01);
+    });
+
+    test('should apply trend factors correctly in Line G', () => {
+      const input = createTestInput();
+      const calculator = new UHCRenewalCalculator(input);
+      const result = calculator.calculate();
+
+      const lineF = result.calculations.find(c => c.line === 'F');
+      const lineG = result.calculations.find(c => c.line === 'G');
+      
+      expect(lineF && lineG).toBeTruthy();
+      
+      // Verify trend was applied (Line G should be higher than Line F for positive trend)
+      expect(lineG!.current.medical).toBeGreaterThan(lineF!.current.medical);
+      expect(lineG!.current.rx).toBeGreaterThan(lineF!.current.rx);
+    });
+
+    test('should apply 70%/30% period weighting in Line J', () => {
+      const input = createTestInput();
+      const calculator = new UHCRenewalCalculator(input);
+      const result = calculator.calculate();
+
+      const lineI = result.calculations.find(c => c.line === 'I');
+      const lineJ = result.calculations.find(c => c.line === 'J');
+      
+      expect(lineI && lineJ).toBeTruthy();
+      
+      // Line J should be weighted average of current and prior
+      if (lineI!.prior) {
+        const expectedWeighted = (lineI!.current.total * 0.70) + (lineI!.prior.total * 0.30);
+        expect(Math.abs(lineJ!.current.total - expectedWeighted)).toBeLessThan(0.01);
+      }
+      
+      // Line J should have no prior column (it's the weighted result)
+      expect(lineJ!.prior).toBeNull();
+    });
+
+    test('should calculate experience and manual components correctly', () => {
+      const input = createTestInput();
+      const calculator = new UHCRenewalCalculator(input);
+      const result = calculator.calculate();
+
+      const lineR = result.calculations.find(c => c.line === 'R'); // Experience Premium PMPM
+      const lineV = result.calculations.find(c => c.line === 'V'); // Manual Premium PMPM
+      const lineW = result.calculations.find(c => c.line === 'W'); // Experience Rating (with credibility)
+      const lineX = result.calculations.find(c => c.line === 'X'); // Manual Rating (with credibility)
+      const lineY = result.calculations.find(c => c.line === 'Y'); // Initial Calculated Renewal Cost
+      
+      expect(lineR && lineV && lineW && lineX && lineY).toBeTruthy();
+      
+      // Line W should be experience premium × experience credibility weight (42%)
+      const expectedExperienceComponent = lineR!.current.total * 0.42;
+      expect(Math.abs(lineW!.current.total - expectedExperienceComponent)).toBeLessThan(0.01);
+      
+      // Line X should be manual premium × manual credibility weight (58%)
+      const expectedManualComponent = lineV!.current.total * 0.58;
+      expect(Math.abs(lineX!.current.total - expectedManualComponent)).toBeLessThan(0.01);
+      
+      // Line Y should equal W + X
+      expect(Math.abs(lineY!.current.total - (lineW!.current.total + lineX!.current.total))).toBeLessThan(0.01);
+    });
+
+    test('should calculate final rate actions correctly', () => {
+      const input = createTestInput();
+      const calculator = new UHCRenewalCalculator(input);
+      const result = calculator.calculate();
+
+      const lineAE = result.calculations.find(c => c.line === 'AE'); // Calculated Renewal Cost PMPM
+      const lineAF = result.calculations.find(c => c.line === 'AF'); // Current Revenue PMPM
+      const lineAG = result.calculations.find(c => c.line === 'AG'); // Calculated Renewal Action %
+      const lineAH = result.calculations.find(c => c.line === 'AH'); // Suggested Renewal Action %
+      
+      expect(lineAE && lineAF && lineAG && lineAH).toBeTruthy();
+      
+      // Final premium should be reasonable
+      expect(lineAE!.current.total).toBeGreaterThan(0);
+      expect(lineAF!.current.total).toBeGreaterThan(0);
+      
+      // Rate change calculation: (AE - AF) / AF
+      const expectedRateChange = (lineAE!.current.total - lineAF!.current.total) / lineAF!.current.total;
+      expect(Math.abs(lineAG!.current.total - expectedRateChange)).toBeLessThan(0.001);
+      
+      // Suggested action should equal calculated action since no override provided
+      expect(lineAH!.current.total).toBe(lineAG!.current.total);
+    });
+
+    test('should calculate experience vs manual correctly', () => {
+      const input = createTestInput();
+      const calculator = new UHCRenewalCalculator(input);
+      const result = calculator.calculate();
+
+      const lineP = result.calculations.find(c => c.line === 'P'); // Experience PMPM (current + prior blended)
+      const lineV = result.calculations.find(c => c.line === 'V'); // Manual PMPM (after all adjustments)
+      
+      expect(lineP?.current.total).toBeGreaterThan(0);
+      expect(lineV?.current.total).toBeGreaterThan(0);
+      
+      // The ratio between experience and manual should be reasonable
+      const experienceToManualRatio = lineP!.current.total / lineV!.current.total;
+      expect(experienceToManualRatio).toBeGreaterThan(0.5); // Experience should be at least 50% of manual
+      expect(experienceToManualRatio).toBeLessThan(2.0); // Experience should not exceed 200% of manual
+    });
+  });
+
+  describe('Partial Year Data Scenarios', () => {
+    test('should handle 6-month current period correctly', () => {
+      const input = createTestInput(6);
+      const calculator = new UHCRenewalCalculator(input);
+      const result = calculator.calculate();
+
+      expect(result.periods.current.months).toBe(6);
+      expect(result.periods.prior).toBeNull();
+      expect(result.dataQuality.annualizationApplied).toBe(true);
+      
+      // Should still produce valid results
+      expect(result.finalPremium.total).toBeGreaterThan(0);
+      expect(result.calculations).toHaveLength(39);
+    });
+
+    test('should handle 18-month data with 12+6 split', () => {
+      const input = createTestInput(18);
+      const calculator = new UHCRenewalCalculator(input);
+      const result = calculator.calculate();
+
+      expect(result.periods.current.months).toBe(12);
+      expect(result.periods.prior?.months).toBe(6);
+      
+      // Prior period should exist but will need annualization
+      const lineA = result.calculations.find(c => c.line === 'A');
+      expect(lineA?.prior).toBeDefined();
+    });
+  });
+
+  describe('Credibility Calculations', () => {
+    test('should have high credibility with large member months', () => {
+      const input = createTestInput(24);
+      
+      const calculator = new UHCRenewalCalculator(input);
+      const result = calculator.calculate();
+
+      expect(result.summary.credibilityWeighting.credibilityFactor).toBeGreaterThan(0.3);
+    });
+
+    test('should have low credibility with small member months', () => {
+      // Create smaller group
+      const smallData = createTestInput(12).monthlyClaimsData.map(month => ({
+        ...month,
+        memberMonths: {
+          total: 100, // Very small group
+          medical: 100,
+          rx: 100 // Fixed property name
+        },
+        incurredClaims: {
+          ...month.incurredClaims,
+          medical: month.incurredClaims.medical / 10, // Scale down claims proportionally
+          rx: month.incurredClaims.rx / 10
+        }
+      }));
+
+      const input: UHCInput = {
+        ...createTestInput(12),
+        monthlyClaimsData: smallData
+      };
+      
+      const calculator = new UHCRenewalCalculator(input);
+      const result = calculator.calculate();
+
+      expect(result.summary.credibilityWeighting.credibilityFactor).toBeLessThan(0.8);
+    });
+  });
+
+  describe('Error Handling', () => {
+    test('should throw error for insufficient data', () => {
+      const input = createTestInput(2); // Only 2 months
+      const calculator = new UHCRenewalCalculator(input);
+      
+      expect(() => calculator.calculate()).toThrow('Minimum 4 months of data required');
+    });
+
+    test('should throw error for missing parameters', () => {
+      const input = {
+        carrier: 'UHC',
+        caseId: 'TEST-001',
+        monthlyClaimsData: createTestClaimsData(),
+        largeClaimantsData: [],
+        manualRates: { medical: 400, rx: 100, total: 500 },
+        effectiveDates: {
+          renewalStart: new Date('2024-01-01'),
+          renewalEnd: new Date('2024-12-31')
+        }
+        // Missing carrierSpecificParameters
+      } as unknown as UHCInput;
+      
+      const calculator = new UHCRenewalCalculator(input);
+      
+      expect(() => calculator.calculate()).toThrow('UHC-specific parameters are required');
+    });
+
+    test('should validate large claimant periods', () => {
+      const input = createTestInput();
+      // Add claimant outside experience period
+      input.largeClaimantsData!.push({
+        claimantId: 'LC004',
+        incurredDate: new Date('2020-01-01'), // Way outside period
+        totalAmount: 200000,
+        medicalAmount: 200000,
+        rxAmount: 0,
+        diagnosis: 'Old claim' // Changed from description to diagnosis
+      });
+      
+      const calculator = new UHCRenewalCalculator(input);
+      const result = calculator.calculate();
+      
+      // Should have warnings but still calculate
+      expect(result.warnings.length).toBeGreaterThan(0);
+      expect(result.finalPremium.total).toBeGreaterThan(0);
+    });
+  });
+
+  describe('Integration with Summary Results', () => {
+    test('should provide accurate summary information', () => {
+      const input = createTestInput();
+      const calculator = new UHCRenewalCalculator(input);
+      const result = calculator.calculate();
+
+      // Summary should match calculation results
+      const lineJ = result.calculations.find(c => c.line === 'J');
+      const lineW = result.calculations.find(c => c.line === 'W');
+      const lineM = result.calculations.find(c => c.line === 'M');
+      
+      expect(result.summary.weightedExperience.total).toBe(lineJ!.current.total);
+      expect(result.summary.totalRetention).toBe(lineW!.current.total);
+      expect(result.summary.credibilityWeighting.credibilityFactor).toBe(lineM!.current.total);
+      
+      // Period analysis should be accurate
+      expect(result.periodAnalysis.current.memberMonths).toBeGreaterThan(0);
+      expect(result.periodAnalysis.current.totalPMPM).toBeGreaterThan(0);
+    });
+
+    test('should calculate projected annual premium correctly', () => {
+      const input = createTestInput();
+      const calculator = new UHCRenewalCalculator(input);
+      const result = calculator.calculate();
+
+      const expectedAnnual = result.finalPremium.total * result.periodAnalysis.current.memberMonths;
+      expect(Math.abs(result.summary.projectedAnnualPremium - expectedAnnual)).toBeLessThan(1);
+    });
+  });
+}); 

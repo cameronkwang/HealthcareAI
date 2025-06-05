@@ -1,0 +1,458 @@
+import { CignaCalculator } from './CignaCalculator';
+import { CignaParameters, CignaInput } from '../../../types/cigna';
+import { ClaimData, MemberData, PharmacyData } from '../../../types/shared';
+
+describe('CignaCalculator', () => {
+  let calculator: CignaCalculator;
+  let standardParams: CignaParameters;
+  let sampleInput: CignaInput;
+
+  beforeEach(() => {
+    calculator = new CignaCalculator();
+    
+    standardParams = {
+      poolingThreshold: 50000,
+      demographicAdjustmentFactor: 1.05,
+      medicalTrend: 0.08,
+      pharmacyTrend: 0.10,
+      largeClaimAddBack: 5000,
+      manualMedicalRate: 450.00,
+      manualPharmacyRate: 120.00,
+      experienceWeight: 0.75,
+      claimsFluctuationCorridor: true,
+      administrationLoading: 0.12,
+      commissionsLoading: 0.03,
+      premiumTaxLoading: 0.025,
+      profitContingencyLoading: 0.02,
+      otherLoading: 0.01,
+      currentPremium: 580.00
+    };
+
+    // Create sample data for 12-month period
+    const claims: ClaimData[] = [
+      { amount: 25000, date: '2023-01-15', memberId: 'M001', type: 'medical', diagnosis: 'Surgery' },
+      { amount: 75000, date: '2023-02-20', memberId: 'M002', type: 'medical', diagnosis: 'Cancer' },
+      { amount: 15000, date: '2023-03-10', memberId: 'M003', type: 'medical', diagnosis: 'Emergency' },
+      { amount: 8000, date: '2023-04-05', memberId: 'M001', type: 'medical', diagnosis: 'Specialist' },
+      { amount: 45000, date: '2023-05-12', memberId: 'M004', type: 'medical', diagnosis: 'Hospital' },
+      { amount: 12000, date: '2023-06-18', memberId: 'M005', type: 'medical', diagnosis: 'Surgery' }
+    ];
+
+    const members: MemberData[] = [
+      { id: 'M001', startDate: '2023-01-01', endDate: '2023-12-31', age: 35, gender: 'M', tier: 'employee' },
+      { id: 'M002', startDate: '2023-01-01', endDate: '2023-12-31', age: 42, gender: 'F', tier: 'family' },
+      { id: 'M003', startDate: '2023-01-01', endDate: '2023-12-31', age: 28, gender: 'M', tier: 'employee+spouse' },
+      { id: 'M004', startDate: '2023-01-01', endDate: '2023-12-31', age: 55, gender: 'F', tier: 'employee' },
+      { id: 'M005', startDate: '2023-01-01', endDate: '2023-12-31', age: 31, gender: 'M', tier: 'family' }
+    ];
+
+    const pharmacy: PharmacyData[] = [
+      { amount: 3000, date: '2023-01-20', memberId: 'M001', drugName: 'Lipitor', category: 'generic' },
+      { amount: 8000, date: '2023-02-15', memberId: 'M002', drugName: 'Humira', category: 'specialty' },
+      { amount: 1500, date: '2023-03-08', memberId: 'M003', drugName: 'Metformin', category: 'generic' },
+      { amount: 2200, date: '2023-04-12', memberId: 'M004', drugName: 'Advair', category: 'brand' },
+      { amount: 950, date: '2023-05-05', memberId: 'M005', drugName: 'Lisinopril', category: 'generic' }
+    ];
+
+    sampleInput = {
+      claims,
+      members,
+      pharmacy,
+      parameters: standardParams,
+      periodStart: '2023-01-01',
+      periodEnd: '2023-12-31'
+    };
+  });
+
+  describe('Basic Calculation Flow', () => {
+    it('should perform complete CIGNA calculation', () => {
+      const result = calculator.calculate(sampleInput);
+
+      expect(result).toBeDefined();
+      expect(result.totalPaidClaims).toBeGreaterThan(0);
+      expect(result.pooledClaims).toBeGreaterThan(0);
+      expect(result.experienceClaimCost).toBeGreaterThan(0);
+      expect(result.requiredPremium).toBeGreaterThan(0);
+      expect(result.rateChange).toBeDefined();
+      expect(result.calculationLines).toHaveLength(12); // CIGNA has 12 standard calculation lines
+    });
+
+    it('should have proper calculation line structure', () => {
+      const result = calculator.calculate(sampleInput);
+
+      result.calculationLines.forEach(line => {
+        expect(line.line).toBeDefined();
+        expect(line.description).toBeDefined();
+        expect(typeof line.pmpm).toBe('number');
+        expect(typeof line.annual).toBe('number');
+      });
+
+      // Check specific lines exist
+      const lineNames = result.calculationLines.map(l => l.line);
+      expect(lineNames).toContain('A');
+      expect(lineNames).toContain('B');
+      expect(lineNames).toContain('C');
+      expect(lineNames).toContain('L'); // Final premium line
+    });
+  });
+
+  describe('Total Paid Claims Calculation', () => {
+    it('should calculate total paid claims correctly', () => {
+      const result = calculator.calculate(sampleInput);
+      
+      // Sum of all claims + pharmacy
+      const expectedTotal = 180000 + 15650; // claims + pharmacy
+      expect(result.totalPaidClaims).toBe(expectedTotal);
+    });
+
+    it('should handle zero claims', () => {
+      const inputWithNoClaims = {
+        ...sampleInput,
+        claims: [],
+        pharmacy: []
+      };
+
+      const result = calculator.calculate(inputWithNoClaims);
+      expect(result.totalPaidClaims).toBe(0);
+    });
+  });
+
+  describe('Pooled Claims Calculation ($50K Threshold)', () => {
+    it('should pool claims above $50K threshold', () => {
+      const result = calculator.calculate(sampleInput);
+      
+      // Only the $75K claim should be pooled (amount above $50K = $25K)
+      expect(result.pooledClaims).toBe(25000);
+    });
+
+    it('should handle no pooled claims when all claims are below threshold', () => {
+      const lowClaimsInput = {
+        ...sampleInput,
+        claims: [
+          { amount: 30000, date: '2023-01-15', memberId: 'M001', type: 'medical' as const, diagnosis: 'Surgery' },
+          { amount: 40000, date: '2023-02-20', memberId: 'M002', type: 'medical' as const, diagnosis: 'Treatment' }
+        ]
+      };
+
+      const result = calculator.calculate(lowClaimsInput);
+      expect(result.pooledClaims).toBe(0);
+    });
+
+    it('should pool multiple claims correctly', () => {
+      const highClaimsInput = {
+        ...sampleInput,
+        claims: [
+          { amount: 75000, date: '2023-01-15', memberId: 'M001', type: 'medical' as const, diagnosis: 'Surgery' },
+          { amount: 120000, date: '2023-02-20', memberId: 'M002', type: 'medical' as const, diagnosis: 'Cancer' }
+        ]
+      };
+
+      const result = calculator.calculate(highClaimsInput);
+      // $75K pools $25K, $120K pools $70K = total $95K pooled
+      expect(result.pooledClaims).toBe(95000);
+    });
+  });
+
+  describe('Experience Claim Cost Calculation', () => {
+    it('should calculate experience claims correctly', () => {
+      const result = calculator.calculate(sampleInput);
+      
+      // Total claims minus pooled claims
+      const expectedExperience = result.totalPaidClaims - result.pooledClaims;
+      expect(result.experienceClaimCost).toBe(expectedExperience);
+    });
+  });
+
+  describe('Demographic Adjustment', () => {
+    it('should apply demographic adjustment factor', () => {
+      const result = calculator.calculate(sampleInput);
+      
+      const expectedAdjusted = result.experienceClaimCost * standardParams.demographicAdjustmentFactor;
+      expect(result.demographicallyAdjustedClaims).toBeCloseTo(expectedAdjusted, 2);
+      expect(result.demographicAdjustment).toBe(standardParams.demographicAdjustmentFactor);
+    });
+
+    it('should handle different adjustment factors', () => {
+      const adjustedParams = {
+        ...standardParams,
+        demographicAdjustmentFactor: 0.95
+      };
+
+      const adjustedInput = {
+        ...sampleInput,
+        parameters: adjustedParams
+      };
+
+      const result = calculator.calculate(adjustedInput);
+      expect(result.demographicAdjustment).toBe(0.95);
+    });
+  });
+
+  describe('Trend Calculations', () => {
+    it('should calculate annual and effective trends', () => {
+      const result = calculator.calculate(sampleInput);
+      
+      // Annual trend should be blended medical/pharmacy trend
+      expect(result.annualTrend).toBeGreaterThan(1);
+      expect(result.effectiveTrend).toBeGreaterThan(1);
+      
+      // Effective trend should be based on experience period
+      expect(result.effectiveTrend).toBeLessThanOrEqual(result.annualTrend);
+    });
+
+    it('should apply trend to claims', () => {
+      const result = calculator.calculate(sampleInput);
+      
+      const expectedTrended = result.demographicallyAdjustedClaims * result.effectiveTrend;
+      expect(result.trendedExperienceClaimCost).toBeCloseTo(expectedTrended, 2);
+    });
+  });
+
+  describe('Large Claim Add Back', () => {
+    it('should apply large claim add back', () => {
+      const result = calculator.calculate(sampleInput);
+      
+      expect(result.largeClaimAddBack).toBe(standardParams.largeClaimAddBack);
+      
+      // Should be added to trended experience
+      const expectedWithAddBack = result.trendedExperienceClaimCost + standardParams.largeClaimAddBack;
+      expect(result.adjustedExperienceClaimCost).toBeCloseTo(expectedWithAddBack, 2);
+    });
+  });
+
+  describe('Experience vs Manual Rate Blending', () => {
+    it('should blend experience and manual rates', () => {
+      const result = calculator.calculate(sampleInput);
+      
+      expect(result.experienceRate).toBeGreaterThan(0);
+      expect(result.manualRate).toBe(standardParams.manualMedicalRate + standardParams.manualPharmacyRate);
+      expect(result.experienceWeight).toBe(standardParams.experienceWeight);
+      
+      // Blended rate should be weighted average
+      const expectedBlended = (result.experienceRate * standardParams.experienceWeight) + 
+                             (result.manualRate * (1 - standardParams.experienceWeight));
+      expect(result.blendedRate).toBeCloseTo(expectedBlended, 2);
+    });
+
+    it('should handle different experience weights', () => {
+      const highWeightParams = {
+        ...standardParams,
+        experienceWeight: 0.90
+      };
+
+      const highWeightInput = {
+        ...sampleInput,
+        parameters: highWeightParams
+      };
+
+      const result = calculator.calculate(highWeightInput);
+      expect(result.experienceWeight).toBe(0.90);
+      
+      // Blended rate should be closer to experience rate
+      const experienceWeight = result.blendedRate - result.manualRate;
+      const totalRange = result.experienceRate - result.manualRate;
+      const actualWeight = totalRange !== 0 ? experienceWeight / totalRange : 0;
+      expect(Math.abs(actualWeight - 0.90)).toBeLessThan(0.01);
+    });
+  });
+
+  describe('Expense Loadings', () => {
+    it('should calculate all expense loadings', () => {
+      const result = calculator.calculate(sampleInput);
+      
+      expect(result.administrationExpense).toBeGreaterThan(0);
+      expect(result.commissionsExpense).toBeGreaterThan(0);
+      expect(result.premiumTaxExpense).toBeGreaterThan(0);
+      expect(result.profitContingencyExpense).toBeGreaterThan(0);
+      expect(result.otherExpense).toBeGreaterThan(0);
+      
+      // Total expenses should sum correctly
+      const expectedTotal = result.administrationExpense + result.commissionsExpense + 
+                           result.premiumTaxExpense + result.profitContingencyExpense + 
+                           result.otherExpense;
+      expect(result.totalExpenses).toBeCloseTo(expectedTotal, 2);
+    });
+
+    it('should apply expense loadings as percentages of blended rate', () => {
+      const result = calculator.calculate(sampleInput);
+      
+      const expectedAdmin = result.blendedRate * standardParams.administrationLoading;
+      expect(result.administrationExpense).toBeCloseTo(expectedAdmin, 2);
+      
+      const expectedCommissions = result.blendedRate * standardParams.commissionsLoading;
+      expect(result.commissionsExpense).toBeCloseTo(expectedCommissions, 2);
+    });
+  });
+
+  describe('Required Premium and Rate Change', () => {
+    it('should calculate required premium correctly', () => {
+      const result = calculator.calculate(sampleInput);
+      
+      // Required premium = blended rate + total expenses
+      const expectedPremium = result.blendedRate + result.totalExpenses;
+      expect(result.requiredPremium).toBeCloseTo(expectedPremium, 2);
+    });
+
+    it('should calculate rate change correctly', () => {
+      const result = calculator.calculate(sampleInput);
+      
+      const expectedRateChange = (result.requiredPremium - standardParams.currentPremium) / standardParams.currentPremium;
+      expect(result.rateChange).toBeCloseTo(expectedRateChange, 4);
+    });
+
+    it('should handle negative rate changes', () => {
+      const highCurrentPremiumParams = {
+        ...standardParams,
+        currentPremium: 800.00
+      };
+
+      const highCurrentInput = {
+        ...sampleInput,
+        parameters: highCurrentPremiumParams
+      };
+
+      const result = calculator.calculate(highCurrentInput);
+      expect(result.rateChange).toBeLessThan(0);
+    });
+  });
+
+  describe('Claims Fluctuation Corridor', () => {
+    it('should indicate when corridor is applied', () => {
+      const result = calculator.calculate(sampleInput);
+      expect(result.claimsFluctuationCorridor).toBe(standardParams.claimsFluctuationCorridor);
+    });
+
+    it('should handle corridor disabled', () => {
+      const noCorridor = {
+        ...standardParams,
+        claimsFluctuationCorridor: false
+      };
+
+      const noCorridorInput = {
+        ...sampleInput,
+        parameters: noCorridor
+      };
+
+      const result = calculator.calculate(noCorridorInput);
+      expect(result.claimsFluctuationCorridor).toBe(false);
+    });
+  });
+
+  describe('Member Months Calculation', () => {
+    it('should calculate member months correctly for full year', () => {
+      const result = calculator.calculate(sampleInput);
+      
+      // 5 members for 12 months each
+      expect(result.memberMonths).toBe(60);
+    });
+
+    it('should handle partial year memberships', () => {
+      const partialMembers: MemberData[] = [
+        { id: 'M001', startDate: '2023-01-01', endDate: '2023-06-30', age: 35, gender: 'M', tier: 'employee' },
+        { id: 'M002', startDate: '2023-07-01', endDate: '2023-12-31', age: 42, gender: 'F', tier: 'family' }
+      ];
+
+      const partialInput = {
+        ...sampleInput,
+        members: partialMembers
+      };
+
+      const result = calculator.calculate(partialInput);
+      // M001: 6 months, M002: 6 months = 12 total
+      expect(result.memberMonths).toBe(12);
+    });
+  });
+
+  describe('Error Handling', () => {
+    it('should handle missing parameters gracefully', () => {
+      const incompleteInput = {
+        ...sampleInput,
+        parameters: {
+          ...standardParams,
+          poolingThreshold: undefined as any
+        }
+      };
+
+      expect(() => calculator.calculate(incompleteInput)).not.toThrow();
+    });
+
+    it('should handle empty member data', () => {
+      const noMembersInput = {
+        ...sampleInput,
+        members: []
+      };
+
+      const result = calculator.calculate(noMembersInput);
+      expect(result.memberMonths).toBe(0);
+    });
+
+    it('should handle invalid date ranges', () => {
+      const invalidDateInput = {
+        ...sampleInput,
+        periodStart: '2023-12-31',
+        periodEnd: '2023-01-01'
+      };
+
+      expect(() => calculator.calculate(invalidDateInput)).not.toThrow();
+    });
+  });
+
+  describe('PMPM vs Annual Calculations', () => {
+    it('should provide both PMPM and annual values in calculation lines', () => {
+      const result = calculator.calculate(sampleInput);
+      
+      result.calculationLines.forEach(line => {
+        if (line.pmpm !== null && line.pmpm > 0) {
+          expect(line.annual).toBeCloseTo(line.pmpm * 12, 2);
+        }
+      });
+    });
+
+    it('should handle lines with null values appropriately', () => {
+      const result = calculator.calculate(sampleInput);
+      
+      // Some lines may have null values for certain calculations
+      const hasNullValues = result.calculationLines.some(line => 
+        line.pmpm === null || line.annual === null
+      );
+      
+      // This is acceptable for certain calculation lines
+      expect(typeof hasNullValues).toBe('boolean');
+    });
+  });
+
+  describe('Partial Year Data Scenarios', () => {
+    it('should handle 6-month experience period', () => {
+      const sixMonthInput = {
+        ...sampleInput,
+        periodStart: '2023-07-01',
+        periodEnd: '2023-12-31'
+      };
+
+      const result = calculator.calculate(sixMonthInput);
+      expect(result).toBeDefined();
+      expect(result.totalPaidClaims).toBeGreaterThanOrEqual(0);
+    });
+
+    it('should handle 18-month data with annualization', () => {
+      const eighteenMonthClaims = [
+        ...sampleInput.claims,
+        ...sampleInput.claims.map(claim => ({
+          ...claim,
+          date: claim.date.replace('2023', '2024')
+        }))
+      ];
+
+      const eighteenMonthInput = {
+        ...sampleInput,
+        claims: eighteenMonthClaims,
+        periodStart: '2023-01-01',
+        periodEnd: '2024-06-30'
+      };
+
+      const result = calculator.calculate(eighteenMonthInput);
+      expect(result).toBeDefined();
+      // Should handle the extended period appropriately
+    });
+  });
+}); 

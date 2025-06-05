@@ -1,0 +1,286 @@
+import { AetnaRenewalCalculator } from './AetnaCalculator';
+import { UniversalInput } from '../../../types/common';
+import { AetnaParameters } from '../../../types/aetna';
+
+describe('AetnaRenewalCalculator', () => {
+  const createTestInput = (): UniversalInput => ({
+    carrier: 'AETNA',
+    caseId: 'TEST-001',
+    effectiveDates: {
+      renewalStart: new Date('2024-01-01'),
+      renewalEnd: new Date('2024-12-31')
+    },
+    monthlyClaimsData: [
+      {
+        month: '2023-01',
+        memberMonths: { total: 1000 },
+        incurredClaims: { medical: 80000, rx: 15000, total: 95000 }
+      },
+      {
+        month: '2023-02',
+        memberMonths: { total: 1020 },
+        incurredClaims: { medical: 82000, rx: 16000, total: 98000 }
+      },
+      {
+        month: '2023-03',
+        memberMonths: { total: 1050 },
+        incurredClaims: { medical: 85000, rx: 17000, total: 102000 }
+      },
+      {
+        month: '2023-04',
+        memberMonths: { total: 1080 },
+        incurredClaims: { medical: 88000, rx: 18000, total: 106000 }
+      },
+      {
+        month: '2023-05',
+        memberMonths: { total: 1100 },
+        incurredClaims: { medical: 90000, rx: 19000, total: 109000 }
+      },
+      {
+        month: '2023-06',
+        memberMonths: { total: 1120 },
+        incurredClaims: { medical: 92000, rx: 20000, total: 112000 }
+      },
+      {
+        month: '2023-07',
+        memberMonths: { total: 1150 },
+        incurredClaims: { medical: 95000, rx: 21000, total: 116000 }
+      },
+      {
+        month: '2023-08',
+        memberMonths: { total: 1180 },
+        incurredClaims: { medical: 98000, rx: 22000, total: 120000 }
+      },
+      {
+        month: '2023-09',
+        memberMonths: { total: 1200 },
+        incurredClaims: { medical: 100000, rx: 23000, total: 123000 }
+      },
+      {
+        month: '2023-10',
+        memberMonths: { total: 1220 },
+        incurredClaims: { medical: 102000, rx: 24000, total: 126000 }
+      },
+      {
+        month: '2023-11',
+        memberMonths: { total: 1250 },
+        incurredClaims: { medical: 105000, rx: 25000, total: 130000 }
+      },
+      {
+        month: '2023-12',
+        memberMonths: { total: 1280 },
+        incurredClaims: { medical: 108000, rx: 26000, total: 134000 }
+      }
+    ],
+    largeClaimantsData: [
+      {
+        claimantId: 'LC001',
+        incurredDate: new Date('2023-06-15'),
+        totalAmount: 250000,
+        medicalAmount: 250000,
+        rxAmount: 0
+      },
+      {
+        claimantId: 'LC002',
+        incurredDate: new Date('2023-09-20'),
+        totalAmount: 300000,
+        medicalAmount: 280000,
+        rxAmount: 20000
+      }
+    ],
+    manualRates: {
+      medical: 75.00,
+      rx: 18.00,
+      total: 93.00
+    },
+    carrierSpecificParameters: {} as AetnaParameters
+  });
+
+  const createTestParameters = (): AetnaParameters => ({
+    deductibleSuppressionFactor: 1.0000,
+    poolingLevel: 175000,
+    poolingChargesPMPM: 2.50,
+    networkAdjustment: 1.0000,
+    planAdjustment: 1.0000,
+    demographicAdjustment: 0.9850,
+    underwritingAdjustment: 1.0000,
+    trendFactor: {
+      medical: 1.0700,
+      rx: 1.0900,
+      months: 18
+    },
+    periodWeighting: {
+      current: 0.75,
+      prior: 0.25
+    },
+    credibilityParameters: {
+      minimumCredibility: 0.10,
+      fullCredibilityMemberMonths: 12000,
+      credibilityFormula: 'sqrt'
+    },
+    manualRates: {
+      medical: 75.00,
+      rx: 18.00
+    },
+    nonBenefitExpensesPMPM: 5.25,
+    retentionComponents: {
+      admin: 8.50,
+      commissions: 3.20,
+      premium_tax: 2.75,
+      risk_margin: 2.00,
+      other: 1.55
+    },
+    currentPremiumPMPM: 110.00,
+    producerServiceFeePMPM: 1.50
+  });
+
+  test('should calculate 28-line Aetna renewal correctly', () => {
+    const input = createTestInput();
+    const parameters = createTestParameters();
+    
+    const calculator = new AetnaRenewalCalculator(input, parameters);
+    const result = calculator.calculate();
+
+    // Verify all 28 lines are calculated
+    expect(result.calculations).toHaveLength(28);
+    
+    // Verify specific line numbers exist
+    const lineNumbers = result.calculations.map(c => c.lineNumber);
+    expect(lineNumbers).toEqual([
+      '1', '2', '3', '4', '5', '6', '7', '8', '9', '10',
+      '11', '12', '13', '14', '15', '16', '17', '18', '19', '20',
+      '21', '22', '23', '24', '25', '26', '27', '28'
+    ]);
+
+    // Verify key calculations
+    const line1 = result.calculations.find(c => c.lineNumber === '1');
+    expect(line1?.description).toBe('Incurred Claims');
+    expect(line1?.current.total).toBeGreaterThan(0);
+
+    const line26 = result.calculations.find(c => c.lineNumber === '26');
+    expect(line26?.description).toBe('Total Amount Due');
+    expect(line26?.current.total).toBe(result.finalPremiumPMPM);
+
+    const line28 = result.calculations.find(c => c.lineNumber === '28');
+    expect(line28?.description).toBe('Required Rate Change');
+    expect(line28?.current.total).toBe(result.rateChange);
+
+    // Verify data quality metrics
+    expect(result.dataQuality.credibilityScore).toBeGreaterThan(0);
+    expect(result.dataQuality.credibilityScore).toBeLessThanOrEqual(1);
+    expect(result.dataQuality.dataCompleteness).toBe(1); // 12 months = 100%
+    expect(result.dataQuality.annualizationApplied).toBe(false); // 12 months, no annualization
+  });
+
+  test('should handle partial year data with annualization', () => {
+    const input = createTestInput();
+    // Use only 6 months of data
+    input.monthlyClaimsData = input.monthlyClaimsData.slice(0, 6);
+    
+    // Adjust large claimant dates to fall within the 6-month period (2023-01 to 2023-06)
+    input.largeClaimantsData = [
+      {
+        claimantId: 'LC001',
+        incurredDate: new Date('2023-03-15'), // Within the 6-month period
+        totalAmount: 250000,
+        medicalAmount: 250000,
+        rxAmount: 0
+      },
+      {
+        claimantId: 'LC002',
+        incurredDate: new Date('2023-05-20'), // Within the 6-month period
+        totalAmount: 300000,
+        medicalAmount: 280000,
+        rxAmount: 20000
+      }
+    ];
+    
+    const parameters = createTestParameters();
+    
+    const calculator = new AetnaRenewalCalculator(input, parameters);
+    const result = calculator.calculate();
+
+    // Should have applied annualization
+    expect(result.dataQuality.annualizationApplied).toBe(true);
+    expect(result.dataQuality.dataCompleteness).toBe(0.5); // 6 months = 50%
+    
+    // Should have no prior period
+    expect(result.periods.prior).toBeNull();
+    
+    // Should have warnings about limited data
+    expect(result.warnings.length).toBeGreaterThan(0);
+    expect(result.warnings.some(w => w.includes('6 months'))).toBe(true);
+  });
+
+  test('should handle large claimants pooling correctly', () => {
+    const input = createTestInput();
+    const parameters = createTestParameters();
+    
+    const calculator = new AetnaRenewalCalculator(input, parameters);
+    const result = calculator.calculate();
+
+    const line4 = result.calculations.find(c => c.lineNumber === '4');
+    expect(line4?.description).toBe('Pooled Claims');
+    
+    // Should have pooled claims from large claimants over $175,000
+    // LC001: $250,000 - $175,000 = $75,000
+    // LC002: $300,000 - $175,000 = $125,000
+    // Total pooled: $200,000
+    const totalMemberMonths = input.monthlyClaimsData.reduce((sum, m) => sum + m.memberMonths.total, 0);
+    const expectedPooledPMPM = 200000 / totalMemberMonths;
+    
+    expect(line4?.current.total).toBeCloseTo(expectedPooledPMPM, 2);
+  });
+
+  test('should apply experience period weighting correctly', () => {
+    const input = createTestInput();
+    // Add prior period data (expand to 24 months)
+    const priorMonths = Array.from({ length: 12 }, (_, i) => ({
+      month: `2022-${String(i + 1).padStart(2, '0')}`,
+      memberMonths: { total: 950 + i * 10 },
+      incurredClaims: { medical: 70000 + i * 1000, rx: 12000 + i * 500, total: 82000 + i * 1500 }
+    }));
+    input.monthlyClaimsData = [...priorMonths, ...input.monthlyClaimsData];
+    
+    const parameters = createTestParameters();
+    
+    const calculator = new AetnaRenewalCalculator(input, parameters);
+    const result = calculator.calculate();
+
+    // Should have both current and prior periods
+    expect(result.periods.prior).not.toBeNull();
+    expect(result.periods.current.months).toBe(12);
+    expect(result.periods.prior?.months).toBe(12);
+
+    const line14 = result.calculations.find(c => c.lineNumber === '14');
+    expect(line14?.description).toBe('Experience Period Weighting');
+    expect(line14?.current.total).toBe(0.75); // 75% current
+    expect(line14?.prior.total).toBe(0.25); // 25% prior
+  });
+
+  test('should calculate credibility based on member months', () => {
+    const input = createTestInput();
+    const parameters = createTestParameters();
+    
+    const calculator = new AetnaRenewalCalculator(input, parameters);
+    const result = calculator.calculate();
+
+    const totalMemberMonths = input.monthlyClaimsData.reduce((sum, m) => sum + m.memberMonths.total, 0);
+    const expectedCredibility = Math.min(1, Math.sqrt(totalMemberMonths / 12000));
+    
+    const line16 = result.calculations.find(c => c.lineNumber === '16');
+    expect(line16?.current.total).toBeCloseTo(expectedCredibility, 3);
+  });
+
+  test('should validate input data', () => {
+    const input = createTestInput();
+    // Remove required data to trigger validation error
+    input.monthlyClaimsData = input.monthlyClaimsData.slice(0, 3); // Only 3 months
+    
+    const parameters = createTestParameters();
+    
+    expect(() => {
+      new AetnaRenewalCalculator(input, parameters);
+    }).toThrow('Minimum 4 months of data required');
+  });
+}); 

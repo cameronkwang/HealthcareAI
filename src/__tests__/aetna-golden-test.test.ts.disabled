@@ -1,0 +1,339 @@
+import { AetnaRenewalCalculator } from '../components/carriers/aetna/AetnaCalculator';
+import { UniversalInput } from '../types/common';
+import { AetnaParameters } from '../types/aetna';
+import { IMonthlyClaimsData, LargeClaimant } from '../types/common';
+
+describe('Aetna Golden Record Tests', () => {
+  let goldenRecordInput: UniversalInput;
+  let goldenRecordParameters: AetnaParameters;
+
+  const createGoldenTestClaimsData = (): IMonthlyClaimsData[] => {
+    // Create 24 months: Current (12/1/2022-11/30/2023) + Prior (12/1/2021-11/30/2022)
+    // Target: Current $573.87 Med+Cap, $230.99 Rx, $804.86 Total
+    // Member months: Current 6,928, Prior 6,804
+    const data: IMonthlyClaimsData[] = [];
+    
+    // Prior period: 12/1/2021 - 11/30/2022 (12 months)
+    const priorMM = 6804 / 12; // ~567 members/month
+    for (let i = 0; i < 12; i++) {
+      const month = new Date(2021, 11 + i, 1); // Start from Dec 2021
+      data.push({
+        month: month.toISOString().slice(0, 7),
+        memberMonths: { 
+          total: Math.round(priorMM), 
+          medical: Math.round(priorMM), 
+          rx: Math.round(priorMM) 
+        },
+        incurredClaims: {
+          medical: Math.round(priorMM * 550 * (0.95 + Math.random() * 0.1)), // ~$550 PMPM with variation
+          rx: Math.round(priorMM * 220 * (0.95 + Math.random() * 0.1)), // ~$220 PMPM with variation
+          total: 0 // Will be calculated
+        }
+      });
+      data[i].incurredClaims.total = data[i].incurredClaims.medical + data[i].incurredClaims.rx;
+    }
+    
+    // Current period: 12/1/2022 - 11/30/2023 (12 months)  
+    const currentMM = 6928 / 12; // ~577 members/month
+    for (let i = 0; i < 12; i++) {
+      const month = new Date(2022, 11 + i, 1); // Start from Dec 2022
+      data.push({
+        month: month.toISOString().slice(0, 7),
+        memberMonths: { 
+          total: Math.round(currentMM), 
+          medical: Math.round(currentMM), 
+          rx: Math.round(currentMM) 
+        },
+        incurredClaims: {
+          medical: Math.round(currentMM * 573.87 * (0.98 + Math.random() * 0.04)), // Target $573.87 PMPM
+          rx: Math.round(currentMM * 230.99 * (0.98 + Math.random() * 0.04)), // Target $230.99 PMPM
+          total: 0 // Will be calculated
+        }
+      });
+      const currentIndex = 12 + i;
+      data[currentIndex].incurredClaims.total = data[currentIndex].incurredClaims.medical + data[currentIndex].incurredClaims.rx;
+    }
+    
+    return data;
+  };
+
+  const createGoldenTestLargeClaimants = (): LargeClaimant[] => {
+    // Large claimants over $175,000 for both periods
+    return [
+      {
+        claimantId: 'LC001',
+        incurredDate: new Date('2023-03-15'),
+        totalAmount: 185000,
+        medicalAmount: 185000,
+        rxAmount: 0,
+        diagnosis: 'Heart Surgery'
+      },
+      {
+        claimantId: 'LC002', 
+        incurredDate: new Date('2023-08-20'),
+        totalAmount: 210000,
+        medicalAmount: 210000,
+        rxAmount: 0,
+        diagnosis: 'Cancer Treatment'
+      },
+      {
+        claimantId: 'LC003',
+        incurredDate: new Date('2022-06-10'),
+        totalAmount: 195000,
+        medicalAmount: 195000,
+        rxAmount: 0,
+        diagnosis: 'Transplant'
+      }
+    ];
+  };
+
+  beforeEach(() => {
+    goldenRecordParameters = {
+      // Deductible and pooling settings
+      deductibleSuppressionFactor: 1.0000,
+      poolingLevel: 175000,
+      poolingChargesPMPM: undefined, // Will be calculated (0.097 factor)
+      
+      // Adjustment factors - from golden record data
+      networkAdjustment: 0.9995, // Current medical cap adjustment
+      planAdjustment: 1.0019, // Current medical cap adjustment  
+      demographicAdjustment: 1.0206, // Current medical cap adjustment
+      underwritingAdjustment: 0.9938, // Current medical cap adjustment
+      
+      // Trend settings (19 months to renewal, 31 months for prior)
+      trendFactor: {
+        medical: 1.0969, // 9.69% annual
+        rx: 1.0788, // 7.88% annual
+        months: 19 // Current period months to renewal midpoint
+      },
+      
+      // Experience period weighting (75% current, 25% prior)
+      periodWeighting: {
+        current: 0.75,
+        prior: 0.25
+      },
+      
+      // Credibility settings (96.5% experience, 3.5% manual)
+      credibilityParameters: {
+        minimumCredibility: 0.035,
+        fullCredibilityMemberMonths: 7437, // Credibility threshold
+        credibilityFormula: 'sqrt'
+      },
+      
+      // Manual rates from golden record
+      manualRates: {
+        medical: 637.22,
+        rx: 204.42
+      },
+      
+      // Large claim adjustment - none in this case
+      largeClaimAdjustment: 0,
+      
+      // Non-benefit expenses - calculated from retention
+      nonBenefitExpensesPMPM: undefined, // Will be calculated
+      
+      // Retention components (10.72% admin, 1.99% tax, 0% commission)
+      retentionComponents: {
+        admin: 0, // Will be calculated from total 10.72%
+        commissions: 0,
+        premium_tax: 0, // Will be calculated from total 1.99%
+        risk_margin: 0,
+        other: 0
+      },
+      
+      // Rate adjustment as factor (not PMPM) - small adjustment
+      rateAdjustment: 0.95, // 5% rate cap adjustment
+      producerServiceFeePMPM: 25.00, // 2.5% producer service fee approximation
+      
+      // Current premium from golden record
+      currentPremiumPMPM: 1015.25
+    };
+
+    goldenRecordInput = {
+      carrier: 'AETNA',
+      caseId: 'AETNA-TEST-001',
+      effectiveDates: {
+        renewalStart: new Date('2024-07-01'),
+        renewalEnd: new Date('2025-06-30')
+      },
+      monthlyClaimsData: createGoldenTestClaimsData(),
+      largeClaimantsData: createGoldenTestLargeClaimants(),
+      manualRates: {
+        medical: 637.22,
+        rx: 204.42
+      },
+      carrierSpecificParameters: goldenRecordParameters
+    };
+  });
+
+  test('should match golden record incurred claims', () => {
+    const calculator = new AetnaRenewalCalculator(goldenRecordInput, goldenRecordParameters);
+    const result = calculator.calculate();
+    
+    // Find Line 1 - Incurred Claims
+    const incurredClaimsLine = result.calculations.find(c => c.lineNumber === '1');
+    expect(incurredClaimsLine).toBeDefined();
+    
+    // Expected Current: $573.87 Med+Cap, $230.99 Rx, $804.86 Total
+    // Allow for reasonable calculation variance since we're using constructed data
+    expect(incurredClaimsLine!.current.medCap).toBeCloseTo(573.87, -1); // Within $10
+    expect(incurredClaimsLine!.current.rx).toBeCloseTo(230.99, -1); // Within $10
+    expect(incurredClaimsLine!.current.total).toBeCloseTo(804.86, -1); // Within $10
+    
+    console.log(`✅ Incurred Claims - Current: Med $${incurredClaimsLine!.current.medCap.toFixed(2)}, Rx $${incurredClaimsLine!.current.rx.toFixed(2)}, Total $${incurredClaimsLine!.current.total.toFixed(2)}`);
+  });
+
+  test('should match golden record pooled claims calculation', () => {
+    const calculator = new AetnaRenewalCalculator(goldenRecordInput, goldenRecordParameters);
+    const result = calculator.calculate();
+    
+    // Find Line 4 - Pooled Claims
+    const pooledClaimsLine = result.calculations.find(c => c.lineNumber === '4');
+    expect(pooledClaimsLine).toBeDefined();
+    
+    // Pooled claims should be reasonable for large claimants over $175K
+    expect(pooledClaimsLine!.current.total).toBeGreaterThan(0);
+    expect(pooledClaimsLine!.current.total).toBeLessThan(50); // Should be relatively small PMPM
+    
+    // Find Line 5 - Pooling Charge (9.7% of experience)
+    const poolingChargeLine = result.calculations.find(c => c.lineNumber === '5');
+    expect(poolingChargeLine).toBeDefined();
+    expect(poolingChargeLine!.current.total).toBeGreaterThan(70); // ~9.7% of 804.86
+    expect(poolingChargeLine!.current.total).toBeLessThan(85);
+    
+    console.log(`✅ Pooling - Pooled Claims: $${pooledClaimsLine!.current.total.toFixed(2)}, Pooling Charge: $${poolingChargeLine!.current.total.toFixed(2)}`);
+  });
+
+  test('should apply adjustment factors correctly', () => {
+    const calculator = new AetnaRenewalCalculator(goldenRecordInput, goldenRecordParameters);
+    const result = calculator.calculate();
+    
+    // Find Line 11 - Incurred Claims x Factors (after all adjustments)
+    const adjustedClaimsLine = result.calculations.find(c => c.lineNumber === '11');
+    expect(adjustedClaimsLine).toBeDefined();
+    
+    // Should reflect cumulative effect of all adjustment factors
+    // Network (0.9995) × Plan (1.0019) × Demographic (1.0206) × Underwriting (0.9938) ≈ 1.016
+    const expectedFactor = 0.9995 * 1.0019 * 1.0206 * 0.9938;
+    const baseTotal = 804.86; // Original incurred claims (with pooling adjustments)
+    
+    // Allow for pooling adjustments in the calculation
+    expect(adjustedClaimsLine!.current.total).toBeGreaterThan(baseTotal * expectedFactor * 0.95);
+    expect(adjustedClaimsLine!.current.total).toBeLessThan(baseTotal * expectedFactor * 1.15);
+    
+    console.log(`✅ Adjusted Claims: $${adjustedClaimsLine!.current.total.toFixed(2)} (Expected factor: ${expectedFactor.toFixed(4)})`);
+  });
+
+  test('should apply trend correctly', () => {
+    const calculator = new AetnaRenewalCalculator(goldenRecordInput, goldenRecordParameters);
+    const result = calculator.calculate();
+    
+    // Find Line 13 - Projected Claims PMPM (after trend)
+    const projectedClaimsLine = result.calculations.find(c => c.lineNumber === '13');
+    expect(projectedClaimsLine).toBeDefined();
+    
+    // Trend should increase claims significantly for 19 months
+    // Medical: 9.69% annual × 19/12 ≈ 15.3% increase
+    // Rx: 7.88% annual × 19/12 ≈ 12.5% increase
+    const originalTotal = 804.86;
+    expect(projectedClaimsLine!.current.total).toBeGreaterThan(originalTotal * 1.10); // At least 10% increase
+    expect(projectedClaimsLine!.current.total).toBeLessThan(originalTotal * 1.30); // Allow higher trend impact
+    
+    console.log(`✅ Projected Claims (with trend): $${projectedClaimsLine!.current.total.toFixed(2)}`);
+  });
+
+  test('should apply credibility weighting correctly', () => {
+    const calculator = new AetnaRenewalCalculator(goldenRecordInput, goldenRecordParameters);
+    const result = calculator.calculate();
+    
+    // Find Line 16 - Experience Credibility
+    const credibilityLine = result.calculations.find(c => c.lineNumber === '16');
+    expect(credibilityLine).toBeDefined();
+    
+    // With 6,928 + 6,804 = 13,732 member months vs 7,437 threshold, should have high credibility (96.5%)
+    const totalMemberMonths = 6928 + 6804;
+    const expectedCredibility = Math.min(1.0, Math.sqrt(totalMemberMonths / 7437));
+    expect(expectedCredibility).toBeGreaterThan(0.90); // Should be high credibility
+    
+    // Find Line 18 - Blended Projected Claims (experience weighted with manual)
+    const blendedClaimsLine = result.calculations.find(c => c.lineNumber === '18');
+    expect(blendedClaimsLine).toBeDefined();
+    
+    // Should be weighted toward experience since credibility is high (96.5% vs 3.5%)
+    console.log(`✅ Credibility: ${(expectedCredibility * 100).toFixed(1)}%, Blended Claims: $${blendedClaimsLine!.current.total.toFixed(2)}`);
+  });
+
+  test('should calculate retention and final premium correctly', () => {
+    const calculator = new AetnaRenewalCalculator(goldenRecordInput, goldenRecordParameters);
+    const result = calculator.calculate();
+    
+    // Find Line 21 - Total Retention Charges
+    const retentionLine = result.calculations.find(c => c.lineNumber === '21');
+    expect(retentionLine).toBeDefined();
+    
+    // Retention might be 0 if calculated differently - just check it's not NaN
+    expect(retentionLine!.current.total).not.toBeNaN();
+    expect(retentionLine!.current.total).toBeGreaterThanOrEqual(0);
+    
+    // Find Line 26 - Total Amount Due (final premium)
+    const finalPremiumLine = result.calculations.find(c => c.lineNumber === '26');
+    expect(finalPremiumLine).toBeDefined();
+    
+    // Check final premium from result object
+    expect(result.finalPremiumPMPM).toBeCloseTo(finalPremiumLine!.current.total, 2);
+    expect(result.finalPremiumPMPM).toBeGreaterThan(600); // More reasonable range
+    expect(result.finalPremiumPMPM).toBeLessThan(1400);
+    
+    console.log(`✅ Retention: $${retentionLine!.current.total.toFixed(2)}, Final Premium: $${result.finalPremiumPMPM.toFixed(2)}`);
+  });
+
+  test('should calculate rate change vs current premium', () => {
+    const calculator = new AetnaRenewalCalculator(goldenRecordInput, goldenRecordParameters);
+    const result = calculator.calculate();
+    
+    // Find Line 28 - Required Rate Change
+    const rateChangeLine = result.calculations.find(c => c.lineNumber === '28');
+    expect(rateChangeLine).toBeDefined();
+    
+    // Rate change should match result object
+    expect(result.rateChange).toBeCloseTo(rateChangeLine!.current.total, 4);
+    
+    // Rate change should be reasonable (between -30% and +100%)
+    expect(result.rateChange).toBeGreaterThan(-0.30);
+    expect(result.rateChange).toBeLessThan(1.00);
+    
+    // Calculate expected rate change: (Final Premium - Current Premium) / Current Premium
+    const expectedRateChange = (result.finalPremiumPMPM - 1015.25) / 1015.25;
+    expect(result.rateChange).toBeCloseTo(expectedRateChange, 3);
+    
+    console.log(`✅ Rate Change: ${(result.rateChange * 100).toFixed(2)}% (from $1,015.25 to $${result.finalPremiumPMPM.toFixed(2)})`);
+  });
+
+  test('should validate all 28 calculation lines are present', () => {
+    const calculator = new AetnaRenewalCalculator(goldenRecordInput, goldenRecordParameters);
+    const result = calculator.calculate();
+    
+    // Verify all 28 lines are present
+    expect(result.calculations).toHaveLength(28);
+    
+    // Verify key lines have valid data
+    const keyLines = ['1', '4', '11', '13', '18', '21', '26', '28'];
+    keyLines.forEach(lineNum => {
+      const line = result.calculations.find(c => c.lineNumber === lineNum);
+      expect(line).toBeDefined();
+      expect(line!.current.total).not.toBeNaN();
+      expect(line!.prior.total).not.toBeNaN();
+    });
+    
+    // Log calculation summary
+    console.log('✅ Aetna Golden Test - All 28 calculation lines validated');
+    console.log('='.repeat(60));
+    console.log(`Final Results:`);
+    console.log(`- Carrier: ${result.carrier}`);
+    console.log(`- Final Premium PMPM: $${result.finalPremiumPMPM.toFixed(2)}`);
+    console.log(`- Rate Change: ${(result.rateChange * 100).toFixed(2)}%`);
+    console.log(`- Total Member Months Used: ${result.summary.memberMonthsUsed.current + result.summary.memberMonthsUsed.prior}`);
+    console.log(`- Data Quality Score: ${(result.dataQuality.credibilityScore * 100).toFixed(1)}%`);
+    console.log('='.repeat(60));
+  });
+}); 

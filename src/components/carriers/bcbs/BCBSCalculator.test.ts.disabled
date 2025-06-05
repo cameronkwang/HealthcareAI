@@ -1,0 +1,620 @@
+import { BCBSCalculator } from './BCBSCalculator';
+import { BCBSInput, BCBSParameters, BCBSPlanData } from '../../../types/bcbs';
+import { IMonthlyClaimsData, LargeClaimant } from '../../../types/common';
+
+describe('BCBSRenewalCalculator', () => {
+  // Test data setup
+  const createTestClaimsData = (months: number = 12): IMonthlyClaimsData[] => {
+    const data: IMonthlyClaimsData[] = [];
+    const baseDate = new Date('2023-12-01');
+    
+    for (let i = 0; i < months; i++) {
+      const month = new Date(baseDate);
+      month.setMonth(baseDate.getMonth() - i);
+      
+      data.push({
+        month: month.toISOString().split('T')[0],
+        memberMonths: {
+          total: 1200 + (i * 20),
+          medical: 1200 + (i * 20),
+          rx: 1200 + (i * 20)
+        },
+        incurredClaims: {
+          medical: 450000 + (i * 8000), // Varying medical claims
+          rx: 95000 + (i * 3000),       // Varying Rx claims
+          total: 545000 + (i * 11000)
+        }
+      });
+    }
+    
+    return data.reverse(); // Oldest first
+  };
+
+  const createTestLargeClaimants = (): LargeClaimant[] => {
+    return [
+      {
+        claimantId: 'LC001',
+        incurredDate: new Date('2023-06-15'),
+        totalAmount: 250000,
+        medicalAmount: 250000,
+        rxAmount: 0,
+        diagnosis: 'Heart Surgery'
+      },
+      {
+        claimantId: 'LC002', 
+        incurredDate: new Date('2023-09-20'),
+        totalAmount: 300000,
+        medicalAmount: 280000,
+        rxAmount: 20000,
+        diagnosis: 'Cancer Treatment'
+      },
+      {
+        claimantId: 'LC003',
+        incurredDate: new Date('2023-11-10'),
+        totalAmount: 275000,
+        medicalAmount: 275000,
+        rxAmount: 0,
+        diagnosis: 'Emergency Surgery'
+      }
+    ];
+  };
+
+  const createTestPlans = (): BCBSPlanData[] => {
+    return [
+      {
+        planId: 'SILVER3000',
+        planName: 'Silver 3000',
+        periods: {
+          current: {
+            medicalClaims: 1800000,
+            pharmacyClaims: 380000,
+            memberMonths: 4800
+          }
+        },
+        largeClaimants: [
+          {
+            claimantId: 'LC001',
+            incurredDate: new Date('2023-06-15'),
+            totalAmount: 250000,
+            claimType: 'medical'
+          }
+        ],
+        enrollment: {
+          single: 150,
+          couple: 80,
+          spmd: 40,
+          family: 120,
+          total: 390
+        }
+      },
+      {
+        planId: 'GOLD1000',
+        planName: 'Gold 1000',
+        periods: {
+          current: {
+            medicalClaims: 2100000,
+            pharmacyClaims: 420000,
+            memberMonths: 3600
+          }
+        },
+        largeClaimants: [
+          {
+            claimantId: 'LC002',
+            incurredDate: new Date('2023-09-20'),
+            totalAmount: 300000,
+            claimType: 'medical'
+          }
+        ],
+        enrollment: {
+          single: 100,
+          couple: 120,
+          spmd: 30,
+          family: 150,
+          total: 400
+        }
+      },
+      {
+        planId: 'PLATINUM500',
+        planName: 'Platinum 500',
+        periods: {
+          current: {
+            medicalClaims: 950000,
+            pharmacyClaims: 210000,
+            memberMonths: 2400
+          }
+        },
+        largeClaimants: [
+          {
+            claimantId: 'LC003',
+            incurredDate: new Date('2023-11-10'),
+            totalAmount: 275000,
+            claimType: 'medical'
+          }
+        ],
+        enrollment: {
+          single: 80,
+          couple: 60,
+          spmd: 20,
+          family: 80,
+          total: 240
+        }
+      }
+    ];
+  };
+
+  const createTestParameters = (): BCBSParameters => {
+    return {
+      analysisDate: new Date('2023-12-31'),
+      renewalEffectiveDate: new Date('2024-01-01'),
+      planParameters: {
+        'SILVER3000': {
+          planId: 'SILVER3000',
+          planName: 'Silver 3000',
+          poolingLevel: 225000,
+          poolingChargesPMPM: 18.00,
+          medicalTrend: {
+            base: 1.0500,
+            compounded: 1.3235,
+            months: 24
+          },
+          pharmacyTrend: {
+            base: 1.0700,
+            compounded: 1.3462,
+            months: 24
+          },
+          medicalIBNR: 1.0200,
+          pharmacyIBNR: 1.0050,
+          ffsAgeAdjustment: 1.0300,
+          experienceWeight: 0.85,
+          manualRate: 480.00,
+          retentionPMPM: 38.00,
+          currentRate: 520.00
+        },
+        'GOLD1000': {
+          planId: 'GOLD1000',
+          planName: 'Gold 1000',
+          poolingLevel: 200000,
+          poolingChargesPMPM: 22.00,
+          medicalTrend: {
+            base: 1.0500,
+            compounded: 1.3235,
+            months: 24
+          },
+          pharmacyTrend: {
+            base: 1.0700,
+            compounded: 1.3462,
+            months: 24
+          },
+          medicalIBNR: 1.0200,
+          pharmacyIBNR: 1.0050,
+          ffsAgeAdjustment: 1.0250,
+          experienceWeight: 0.80,
+          manualRate: 650.00,
+          retentionPMPM: 45.00,
+          currentRate: 720.00
+        },
+        'PLATINUM500': {
+          planId: 'PLATINUM500',
+          planName: 'Platinum 500',
+          poolingLevel: 175000,
+          poolingChargesPMPM: 25.00,
+          medicalTrend: {
+            base: 1.0500,
+            compounded: 1.3235,
+            months: 24
+          },
+          pharmacyTrend: {
+            base: 1.0700,
+            compounded: 1.3462,
+            months: 24
+          },
+          medicalIBNR: 1.0200,
+          pharmacyIBNR: 1.0050,
+          ffsAgeAdjustment: 1.0200,
+          experienceWeight: 0.75,
+          manualRate: 850.00,
+          retentionPMPM: 55.00,
+          currentRate: 950.00
+        }
+      },
+      compositeSettings: {
+        weightingMethod: 'enrollment',
+        minimumRateChange: -0.10,
+        maximumRateChange: 0.25
+      }
+    };
+  };
+
+  const createTestInput = (
+    customPlans?: BCBSPlanData[],
+    customParams?: Partial<BCBSParameters>
+  ): BCBSInput => {
+    return {
+      carrier: 'BCBS',
+      caseId: 'BCBS-TEST-001',
+      monthlyClaimsData: createTestClaimsData(),
+      largeClaimantsData: createTestLargeClaimants(),
+      effectiveDates: {
+        renewalStart: new Date('2024-01-01'),
+        renewalEnd: new Date('2024-12-31')
+      },
+      manualRates: {
+        medical: 500.00,
+        rx: 130.00,
+        total: 630.00
+      },
+      carrierSpecificParameters: {
+        ...createTestParameters(),
+        ...customParams
+      },
+      plans: customPlans || createTestPlans()
+    };
+  };
+
+  describe('Multi-Plan Calculation Flow', () => {
+    test('should calculate all plans successfully', () => {
+      const input = createTestInput();
+      const calculator = new BCBSCalculator(input);
+      const result = calculator.calculate();
+
+      // Verify basic structure
+      expect(result.carrier).toBe('BCBS');
+      expect(result.plans).toHaveLength(3);
+      expect(result.composite).toBeDefined();
+      expect(result.summary.totalPlans).toBe(3);
+
+      // Verify all plans are calculated
+      const planIds = result.plans.map(p => p.planId);
+      expect(planIds).toContain('SILVER3000');
+      expect(planIds).toContain('GOLD1000');
+      expect(planIds).toContain('PLATINUM500');
+
+      // Each plan should have complete calculations
+      result.plans.forEach(plan => {
+        expect(plan.medical).toBeDefined();
+        expect(plan.pharmacy).toBeDefined();
+        expect(plan.total).toBeDefined();
+        expect(plan.enrollment).toBeDefined();
+        expect(plan.rateAction).toBeDefined();
+      });
+    });
+
+    test('should handle single plan correctly', () => {
+      const singlePlan = createTestPlans().slice(0, 1);
+      const input = createTestInput(singlePlan);
+      const calculator = new BCBSCalculator(input);
+      const result = calculator.calculate();
+
+      expect(result.plans).toHaveLength(1);
+      expect(result.summary.totalPlans).toBe(1);
+      expect(result.plans[0].enrollment.weight).toBe(1.0); // 100% weight for single plan
+    });
+  });
+
+  describe('Plan-Specific Calculations', () => {
+    test('should calculate medical components correctly for each plan', () => {
+      const input = createTestInput();
+      const calculator = new BCBSCalculator(input);
+      const result = calculator.calculate();
+
+      const silverPlan = result.plans.find(p => p.planId === 'SILVER3000');
+      expect(silverPlan).toBeDefined();
+
+      // Verify medical calculations
+      expect(silverPlan!.medical.incurredClaims).toBe(1800000);
+      expect(silverPlan!.medical.netPMPM).toBeGreaterThan(0);
+      expect(silverPlan!.medical.projectedPMPM).toBeGreaterThan(silverPlan!.medical.netPMPM);
+
+      // Pooling should remove amounts over $225K threshold
+      expect(silverPlan!.medical.pooledClaims).toBeGreaterThan(0);
+      expect(silverPlan!.medical.netClaims).toBeLessThan(silverPlan!.medical.incurredClaims);
+    });
+
+    test('should calculate pharmacy components correctly', () => {
+      const input = createTestInput();
+      const calculator = new BCBSCalculator(input);
+      const result = calculator.calculate();
+
+      const goldPlan = result.plans.find(p => p.planId === 'GOLD1000');
+      expect(goldPlan).toBeDefined();
+
+      // Verify pharmacy calculations
+      expect(goldPlan!.pharmacy.incurredClaims).toBe(420000);
+      expect(goldPlan!.pharmacy.netPMPM).toBeGreaterThan(0);
+      expect(goldPlan!.pharmacy.projectedPMPM).toBeGreaterThan(goldPlan!.pharmacy.netPMPM);
+
+      // Pharmacy trend should be applied
+      expect(goldPlan!.pharmacy.trendFactor).toBeCloseTo(1.3462, 3);
+      expect(goldPlan!.pharmacy.ibnrFactor).toBeCloseTo(1.0050, 3);
+    });
+
+    test('should apply plan-specific pooling levels', () => {
+      const input = createTestInput();
+      const calculator = new BCBSCalculator(input);
+      const result = calculator.calculate();
+
+      const silverPlan = result.plans.find(p => p.planId === 'SILVER3000');
+      const goldPlan = result.plans.find(p => p.planId === 'GOLD1000');
+      const platinumPlan = result.plans.find(p => p.planId === 'PLATINUM500');
+
+      // Different plans should have different pooling calculations
+      // Silver: $225K threshold
+      // Gold: $200K threshold
+      // Platinum: $175K threshold
+      
+      // Since all large claimants are above all thresholds, 
+      // but thresholds differ, pooled amounts should differ
+      expect(silverPlan!.medical.pooledClaims).not.toBe(goldPlan!.medical.pooledClaims);
+      expect(goldPlan!.medical.pooledClaims).not.toBe(platinumPlan!.medical.pooledClaims);
+    });
+
+    test('should calculate total components with proper adjustments', () => {
+      const input = createTestInput();
+      const calculator = new BCBSCalculator(input);
+      const result = calculator.calculate();
+
+      const platinumPlan = result.plans.find(p => p.planId === 'PLATINUM500');
+      expect(platinumPlan).toBeDefined();
+
+      // Verify total calculation flow
+      const expectedCombined = platinumPlan!.medical.projectedPMPM + platinumPlan!.pharmacy.projectedPMPM;
+      expect(platinumPlan!.total.combinedProjectedPMPM).toBeCloseTo(expectedCombined, 2);
+
+      // Age adjustment should be applied
+      expect(platinumPlan!.total.adjustedPMPM).toBeCloseTo(
+        expectedCombined * 1.0200, 2 // Platinum FFS age adjustment
+      );
+
+      // Pooling charges should be added
+      expect(platinumPlan!.total.withPoolingCharges).toBeCloseTo(
+        platinumPlan!.total.adjustedPMPM + 25.00, 2 // Platinum pooling charges
+      );
+
+      // Experience/manual blending should occur
+      expect(platinumPlan!.total.experienceWeight).toBe(0.75);
+      expect(platinumPlan!.total.experienceComponent).toBeGreaterThan(0);
+      expect(platinumPlan!.total.manualComponent).toBeGreaterThan(0);
+
+      // Final premium includes retention
+      expect(platinumPlan!.total.requiredPremium).toBeCloseTo(
+        platinumPlan!.total.credibilityAdjustedPMPM + 55.00, 2 // Platinum retention
+      );
+    });
+  });
+
+  describe('Enrollment Weighting', () => {
+    test('should calculate plan weights correctly', () => {
+      const input = createTestInput();
+      const calculator = new BCBSCalculator(input);
+      const result = calculator.calculate();
+
+      const totalEnrollment = 390 + 400 + 240; // Silver + Gold + Platinum
+      
+      const silverPlan = result.plans.find(p => p.planId === 'SILVER3000');
+      const goldPlan = result.plans.find(p => p.planId === 'GOLD1000');
+      const platinumPlan = result.plans.find(p => p.planId === 'PLATINUM500');
+
+      expect(silverPlan!.enrollment.weight).toBeCloseTo(390 / totalEnrollment, 3);
+      expect(goldPlan!.enrollment.weight).toBeCloseTo(400 / totalEnrollment, 3);
+      expect(platinumPlan!.enrollment.weight).toBeCloseTo(240 / totalEnrollment, 3);
+
+      // Weights should sum to 1.0
+      const totalWeight = silverPlan!.enrollment.weight + goldPlan!.enrollment.weight + platinumPlan!.enrollment.weight;
+      expect(totalWeight).toBeCloseTo(1.0, 3);
+    });
+
+    test('should calculate enrollment-weighted composite premium', () => {
+      const input = createTestInput();
+      const calculator = new BCBSCalculator(input);
+      const result = calculator.calculate();
+
+      // Verify composite calculation
+      const expectedWeightedPremium = result.plans.reduce((sum, plan) => {
+        return sum + (plan.total.requiredPremium * plan.enrollment.weight);
+      }, 0);
+
+      expect(result.composite.weightedPremiumPMPM).toBeCloseTo(expectedWeightedPremium, 2);
+      expect(result.composite.totalEnrollment).toBe(1030); // 390 + 400 + 240
+    });
+  });
+
+  describe('Rate Actions', () => {
+    test('should calculate rate changes correctly for each plan', () => {
+      const input = createTestInput();
+      const calculator = new BCBSCalculator(input);
+      const result = calculator.calculate();
+
+      result.plans.forEach(plan => {
+        const expectedRateChange = plan.total.requiredPremium - plan.rateAction.currentRate;
+        const expectedChangePercent = expectedRateChange / plan.rateAction.currentRate;
+
+        expect(plan.rateAction.rateChange).toBeCloseTo(expectedRateChange, 2);
+        expect(plan.rateAction.changePercent).toBeCloseTo(expectedChangePercent, 4);
+        expect(plan.rateAction.requiredRate).toBe(plan.total.requiredPremium);
+      });
+    });
+
+    test('should classify rate action status correctly', () => {
+      const input = createTestInput();
+      const calculator = new BCBSCalculator(input);
+      const result = calculator.calculate();
+
+      result.plans.forEach(plan => {
+        const changePercent = plan.rateAction.changePercent;
+        
+        if (Math.abs(changePercent) < 0.02) {
+          expect(plan.rateAction.status).toBe('minimal');
+        } else if (changePercent > 0) {
+          expect(plan.rateAction.status).toBe('increase');
+        } else {
+          expect(plan.rateAction.status).toBe('decrease');
+        }
+      });
+    });
+
+    test('should calculate weighted average rate change', () => {
+      const input = createTestInput();
+      const calculator = new BCBSCalculator(input);
+      const result = calculator.calculate();
+
+      const expectedAverage = result.plans.reduce((sum, plan) => {
+        return sum + (plan.rateAction.changePercent * plan.enrollment.weight);
+      }, 0);
+
+      expect(result.composite.averageRateChange).toBeCloseTo(expectedAverage, 4);
+    });
+  });
+
+  describe('Composite Analysis', () => {
+    test('should provide accurate composite metrics', () => {
+      const input = createTestInput();
+      const calculator = new BCBSCalculator(input);
+      const result = calculator.calculate();
+
+      // Verify composite totals
+      const expectedMedicalClaims = result.plans.reduce((sum, plan) => sum + plan.medical.incurredClaims, 0);
+      const expectedPharmacyClaims = result.plans.reduce((sum, plan) => sum + plan.pharmacy.incurredClaims, 0);
+
+      expect(result.composite.totalMedicalClaims).toBe(expectedMedicalClaims);
+      expect(result.composite.totalPharmacyClaims).toBe(expectedPharmacyClaims);
+
+      // Plan weights should be properly stored
+      expect(Object.keys(result.composite.planWeights)).toHaveLength(3);
+      expect(result.composite.planWeights['SILVER3000']).toBeDefined();
+      expect(result.composite.planWeights['GOLD1000']).toBeDefined();
+      expect(result.composite.planWeights['PLATINUM500']).toBeDefined();
+    });
+
+    test('should calculate range of rate changes', () => {
+      const input = createTestInput();
+      const calculator = new BCBSCalculator(input);
+      const result = calculator.calculate();
+
+      const rateChanges = result.plans.map(plan => plan.rateAction.changePercent);
+      const minChange = Math.min(...rateChanges);
+      const maxChange = Math.max(...rateChanges);
+
+      expect(result.summary.rangeOfRateChanges.minimum).toBe(minChange);
+      expect(result.summary.rangeOfRateChanges.maximum).toBe(maxChange);
+    });
+  });
+
+  describe('Error Handling', () => {
+    test('should throw error for missing plan parameters', () => {
+      const incompleteParams = createTestParameters();
+      delete incompleteParams.planParameters['SILVER3000'];
+
+      const input = createTestInput(undefined, incompleteParams);
+      const calculator = new BCBSCalculator(input);
+
+      expect(() => calculator.calculate()).toThrow('Parameters missing for plan SILVER3000');
+    });
+
+    test('should throw error for no plans', () => {
+      const input = createTestInput([]);
+      const calculator = new BCBSCalculator(input);
+
+      expect(() => calculator.calculate()).toThrow('At least one plan is required');
+    });
+
+    test('should handle plans with zero enrollment gracefully', () => {
+      const plansWithZeroEnrollment = createTestPlans();
+      plansWithZeroEnrollment[0].enrollment = {
+        single: 0,
+        couple: 0,
+        spmd: 0,
+        family: 0,
+        total: 0
+      };
+
+      const input = createTestInput(plansWithZeroEnrollment);
+      const calculator = new BCBSCalculator(input);
+      const result = calculator.calculate();
+
+      // Should still calculate but with zero weight
+      expect(result.plans).toHaveLength(3);
+      const zeroPlan = result.plans.find(p => p.planId === 'SILVER3000');
+      expect(zeroPlan!.enrollment.weight).toBeCloseTo(0, 3);
+    });
+  });
+
+  describe('Data Quality Assessment', () => {
+    test('should assess data quality correctly', () => {
+      const input = createTestInput();
+      const calculator = new BCBSCalculator(input);
+      const result = calculator.calculate();
+
+      expect(result.dataQuality.dataCompleteness).toBeGreaterThan(0);
+      expect(result.dataQuality.plansWithSufficientData).toBeGreaterThan(0);
+      expect(result.dataQuality.annualizationApplied).toBe(false); // 12 months = no annualization
+    });
+
+    test('should identify plans with insufficient data', () => {
+      const smallPlans = createTestPlans();
+      smallPlans[0].enrollment.total = 5; // Below minimum threshold
+
+      const input = createTestInput(smallPlans);
+      const calculator = new BCBSCalculator(input);
+      const result = calculator.calculate();
+
+      // Should flag plans with insufficient enrollment
+      expect(result.dataQuality.plansWithSufficientData).toBeLessThan(3);
+    });
+  });
+
+  describe('Trend Factor Application', () => {
+    test('should apply correct trend factors by plan type', () => {
+      const input = createTestInput();
+      const calculator = new BCBSCalculator(input);
+      const result = calculator.calculate();
+
+      result.plans.forEach(plan => {
+        // Medical trend should be 1.3235 for all plans (24-month compounded)
+        expect(plan.medical.trendFactor).toBeCloseTo(1.3235, 3);
+        
+        // Pharmacy trend should be 1.3462 for all plans (24-month compounded)
+        expect(plan.pharmacy.trendFactor).toBeCloseTo(1.3462, 3);
+      });
+    });
+  });
+
+  describe('IBNR Factor Application', () => {
+    test('should apply IBNR factors correctly', () => {
+      const input = createTestInput();
+      const calculator = new BCBSCalculator(input);
+      const result = calculator.calculate();
+
+      result.plans.forEach(plan => {
+        expect(plan.medical.ibnrFactor).toBeCloseTo(1.0200, 4);
+        expect(plan.pharmacy.ibnrFactor).toBeCloseTo(1.0050, 4);
+      });
+    });
+  });
+
+  describe('Experience vs Manual Blending', () => {
+    test('should blend experience and manual rates by plan-specific weights', () => {
+      const input = createTestInput();
+      const calculator = new BCBSCalculator(input);
+      const result = calculator.calculate();
+
+      const silverPlan = result.plans.find(p => p.planId === 'SILVER3000');
+      const goldPlan = result.plans.find(p => p.planId === 'GOLD1000');
+      const platinumPlan = result.plans.find(p => p.planId === 'PLATINUM500');
+
+      // Different experience weights should be applied
+      expect(silverPlan!.total.experienceWeight).toBe(0.85);
+      expect(goldPlan!.total.experienceWeight).toBe(0.80);
+      expect(platinumPlan!.total.experienceWeight).toBe(0.75);
+
+      // Manual components should reflect the remaining weights
+      result.plans.forEach(plan => {
+        const experienceWeight = plan.total.experienceWeight;
+        const expectedExperience = plan.total.withPoolingCharges * experienceWeight;
+        const expectedManual = plan.rateAction.currentRate * (1 - experienceWeight); // Using current rate as proxy for manual rate
+        
+        expect(plan.total.experienceComponent).toBeCloseTo(expectedExperience, 2);
+        // Note: Manual component calculation may vary based on plan parameters
+      });
+    });
+  });
+}); 

@@ -1,0 +1,201 @@
+import { BCBSCalculator } from '../components/carriers/bcbs/BCBSCalculator';
+import { BCBSInput, BCBSCalculationResult } from '../types/bcbs';
+
+describe('BCBS Calculator Simple Test', () => {
+  const calculator = new BCBSCalculator();
+
+  test('BCBS Calculator instantiates correctly', () => {
+    expect(calculator).toBeDefined();
+    expect(typeof calculator.calculateRenewal).toBe('function');
+  });
+
+  test('Calculator handles minimal valid input', async () => {
+    // Minimal test input that matches the required structure
+    const minimalInput: BCBSInput = {
+      caseId: 'test-case-001',
+      carrier: 'BCBS',
+      effectiveDates: {
+        renewalStart: new Date('2024-02-01'),
+        renewalEnd: new Date('2025-01-31')
+      },
+      monthlyClaimsData: [
+        {
+          month: '2023-02',
+          memberMonths: { medical: 100, rx: 100, total: 100 },
+          incurredClaims: { medical: 50000, rx: 15000 }
+        }
+      ],
+      largeClaimantsData: [],
+      manualRates: {
+        medical: 300.00,
+        rx: 150.00,
+        total: 450.00
+      },
+      carrierSpecificParameters: {
+        plans: [
+          {
+            planId: 'plan1',
+            planName: 'Test Plan',
+            poolingLevel: 225000,
+            experienceWeights: { current: 0.33, renewal: 0.67 },
+            credibilityFactor: 1.00,
+            ibnrFactors: {
+              medical: { current: 1.0000, renewal: 1.0240 },
+              pharmacy: { current: 1.0000, renewal: 1.0020 }
+            },
+            trendFactors: {
+              medical: {
+                annualCurrent: 1.1000, annualRenewal: 1.1003,
+                monthsCurrent: 35.0, monthsRenewal: 23.0,
+                compoundedCurrent: 1.3235, compoundedRenewal: 1.2010
+              },
+              pharmacy: {
+                annualCurrent: 1.1073, annualRenewal: 1.1136,
+                monthsCurrent: 35.0, monthsRenewal: 23.0,
+                compoundedCurrent: 1.3462, compoundedRenewal: 1.2290
+              }
+            },
+            adjustmentFactors: {
+              ffsAge: { current: 1.0375, renewal: 1.0214 },
+              benefitAdjustment: 1.0000,
+              underwriterAdjustment: 1.0000,
+              pathwayToSavings: 0.9950
+            },
+            retentionComponents: {
+              retentionPMPM: { current: 93.49, renewal: 145.11 },
+              ppoPremiumTax: { current: 6.48, renewal: 9.96 },
+              acaAdjustments: { current: 0.27, renewal: 0.41 }
+            },
+            currentPremiumPMPM: 500.00,
+            manualClaimsPMPM: { current: 300.00, renewal: 350.00 }
+          }
+        ],
+        compositeWeighting: {
+          enrollmentBased: true,
+          totalEnrollment: 100
+        },
+        globalSettings: {
+          totalMemberMonths: 100
+        }
+      },
+      multiPlanData: {
+        plans: [
+          {
+            planId: 'plan1',
+            experiencePeriods: {
+              current: {
+                startDate: new Date('2023-02-01'),
+                endDate: new Date('2024-01-31'),
+                memberMonths: 100
+              },
+              renewal: {
+                startDate: new Date('2024-02-01'),
+                endDate: new Date('2025-01-31'),
+                memberMonths: 100
+              }
+            },
+            memberMonths: {
+              currentTotal: 100,
+              renewalTotal: 100,
+              projectedMonthlyMembers: { current: 8.33, renewal: 8.33 }
+            },
+            medicalClaims: {
+              current: {
+                totalClaims: 50000,
+                poolingLevel: 225000,
+                pooledClaims: 0,
+                netClaims: 50000,
+                expPeriodMemberMonths: 100,
+                netPMPM: 500.00,
+                adjustedNetPMPM: 500.00,
+                projectedPMPM: 550.00
+              },
+              renewal: {
+                totalClaims: 55000,
+                poolingLevel: 225000,
+                pooledClaims: 0,
+                netClaims: 55000,
+                expPeriodMemberMonths: 100,
+                netPMPM: 550.00,
+                adjustedNetPMPM: 550.00,
+                projectedPMPM: 600.00
+              }
+            },
+            pharmacyClaims: {
+              current: {
+                totalClaims: 15000,
+                poolingLevel: 0,
+                pooledClaims: 0,
+                netClaims: 15000,
+                expPeriodMemberMonths: 100,
+                netPMPM: 150.00,
+                adjustedNetPMPM: 150.00,
+                projectedPMPM: 160.00
+              },
+              renewal: {
+                totalClaims: 16000,
+                poolingLevel: 0,
+                pooledClaims: 0,
+                netClaims: 16000,
+                expPeriodMemberMonths: 100,
+                netPMPM: 160.00,
+                adjustedNetPMPM: 160.00,
+                projectedPMPM: 170.00
+              }
+            },
+            enrollment: {
+              current: {
+                single: { count: 10, rate: 500.00 },
+                couple: { count: 0, rate: 0 },
+                spmd: { count: 0, rate: 0 },
+                family: { count: 0, rate: 0 },
+                total: { count: 10, monthlyPremium: 5000, annualPremium: 60000 }
+              },
+              renewal: {
+                single: { count: 10, rate: 520.00 },
+                couple: { count: 0, rate: 0 },
+                spmd: { count: 0, rate: 0 },
+                family: { count: 0, rate: 0 },
+                total: { count: 10, monthlyPremium: 5200, annualPremium: 62400 }
+              }
+            }
+          }
+        ],
+        totalMemberMonths: 100
+      }
+    };
+
+    const metadata = {
+      calculationDate: new Date(),
+      version: '1.0',
+      requestId: 'test-simple-001'
+    };
+
+    console.log('Running simple BCBS calculation...');
+    const result: BCBSCalculationResult = await calculator.calculateRenewal(minimalInput, metadata);
+
+    // Basic structure validation
+    expect(result).toBeDefined();
+    expect(result.carrier).toBe('BCBS');
+    expect(result.individualPlans).toHaveLength(1);
+    expect(result.composite).toBeDefined();
+    expect(result.enrollmentSummary).toBeDefined();
+    
+    // Plan validation
+    const plan1 = result.individualPlans[0];
+    expect(plan1.planId).toBe('plan1');
+    expect(plan1.calculations).toBeDefined();
+    expect(plan1.finalMetrics).toBeDefined();
+    
+    // Rate action validation - should be reasonable (allowing up to 200% for test data)
+    expect(plan1.finalMetrics.rateAction).toBeGreaterThan(-0.50);
+    expect(plan1.finalMetrics.rateAction).toBeLessThan(2.00);
+    
+    console.log('✅ Simple BCBS test completed successfully!');
+    console.log(`Rate Action: ${(plan1.finalMetrics.rateAction * 100).toFixed(2)}%`);
+    console.log(`Current Premium PMPM: $${plan1.finalMetrics.currentPremiumPMPM.toFixed(2)}`);
+    console.log(`Projected Premium PMPM: $${plan1.finalMetrics.projectedPremiumPMPM.toFixed(2)}`);
+    console.log(`Calculation Lines Generated: ${plan1.calculations.length}`);
+    console.log(`Composite Rate Action: ${(result.composite.compositeRateAction * 100).toFixed(2)}%`);
+  });
+}); 

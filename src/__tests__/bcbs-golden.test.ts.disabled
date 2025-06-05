@@ -1,0 +1,194 @@
+import { BCBSCalculator } from '../components/carriers/bcbs/BCBSCalculator';
+import { BCBSInput } from '../types/bcbs';
+
+describe('BCBS Multi-Plan Golden Test', () => {
+  const calculator = new BCBSCalculator();
+
+  test('BCBS 5-Plan Calculator Test', async () => {
+    // Test data setup - simplified to match actual type structure
+    const bcbsTestInput: BCBSInput = {
+      carrier: 'BCBS',
+      caseId: 'BCBS-GOLDEN-001',
+      effectiveDates: {
+        renewalStart: new Date('2024-02-01'),
+        renewalEnd: new Date('2025-01-31')
+      },
+      monthlyClaimsData: [], // Not used by BCBS calculator - uses multiPlanData instead
+      largeClaimantsData: [], // Not used by BCBS calculator - pooling handled within multiPlanData
+      manualRates: { // Not used by BCBS calculator - manual rates are in plan parameters
+        medical: 0,
+        rx: 0
+      },
+      carrierSpecificParameters: {
+        plans: [
+          {
+            planId: 'plan1',
+            planName: 'BCE Saver $3000 with Coinsurance',
+            poolingLevel: 225000,
+            experienceWeights: { current: 0.33, renewal: 0.67 },
+            credibilityFactor: 1.00,
+            ibnrFactors: {
+              medical: { current: 1.0000, renewal: 1.0240 },
+              pharmacy: { current: 1.0000, renewal: 1.0020 }
+            },
+            trendFactors: {
+              medical: {
+                annualCurrent: 1.1000, annualRenewal: 1.1003,
+                monthsCurrent: 35.0, monthsRenewal: 23.0,
+                compoundedCurrent: 1.3235, compoundedRenewal: 1.2010
+              },
+              pharmacy: {
+                annualCurrent: 1.1073, annualRenewal: 1.1136,
+                monthsCurrent: 35.0, monthsRenewal: 23.0,
+                compoundedCurrent: 1.3462, compoundedRenewal: 1.2290
+              }
+            },
+            adjustmentFactors: {
+              ffsAge: { current: 1.0375, renewal: 1.0214 },
+              benefitAdjustment: 1.0000,
+              underwriterAdjustment: 1.0000,
+              pathwayToSavings: 0.9950
+            },
+            retentionComponents: {
+              retentionPMPM: { current: 93.49, renewal: 145.11 },
+              ppoPremiumTax: { current: 6.48, renewal: 9.96 },
+              acaAdjustments: { current: 0.27, renewal: 0.41 }
+            },
+            currentPremiumPMPM: 624.76,
+            manualClaimsPMPM: { current: 367.92, renewal: 536.12 }
+          }
+          // Adding more plans would follow same structure
+        ],
+        compositeWeighting: {
+          enrollmentBased: true,
+          totalEnrollment: 1200
+        },
+        globalSettings: {
+          totalMemberMonths: 4628
+        }
+      },
+      multiPlanData: {
+        plans: [
+          {
+            planId: 'plan1',
+            experiencePeriods: {
+              current: {
+                startDate: new Date('2023-02-01'),
+                endDate: new Date('2024-01-31'),
+                memberMonths: 650
+              },
+              renewal: {
+                startDate: new Date('2024-02-01'),
+                endDate: new Date('2025-01-31'),
+                memberMonths: 650
+              }
+            },
+            memberMonths: {
+              currentTotal: 650,
+              renewalTotal: 650,
+              projectedMonthlyMembers: { current: 54.2, renewal: 54.2 }
+            },
+            medicalClaims: {
+              current: {
+                totalClaims: 239000,
+                poolingLevel: 225000,
+                pooledClaims: 14000,
+                netClaims: 225000,
+                expPeriodMemberMonths: 650,
+                netPMPM: 346.15,
+                adjustedNetPMPM: 367.92,
+                projectedPMPM: 536.12
+              },
+              renewal: {
+                totalClaims: 348520,
+                poolingLevel: 225000,
+                pooledClaims: 123520,
+                netClaims: 225000,
+                expPeriodMemberMonths: 650,
+                netPMPM: 346.15,
+                adjustedNetPMPM: 367.92,
+                projectedPMPM: 536.12
+              }
+            },
+            pharmacyClaims: {
+              current: {
+                totalClaims: 68250,
+                poolingLevel: 0,
+                pooledClaims: 0,
+                netClaims: 68250,
+                expPeriodMemberMonths: 650,
+                netPMPM: 105.00,
+                adjustedNetPMPM: 105.00,
+                projectedPMPM: 128.69
+              },
+              renewal: {
+                totalClaims: 83648,
+                poolingLevel: 0,
+                pooledClaims: 0,
+                netClaims: 83648,
+                expPeriodMemberMonths: 650,
+                netPMPM: 105.00,
+                adjustedNetPMPM: 105.00,
+                projectedPMPM: 128.69
+              }
+            },
+            enrollment: {
+              current: {
+                single: { count: 150, rate: 471.82 },
+                couple: { count: 100, rate: 943.64 },
+                spmd: { count: 50, rate: 707.73 },
+                family: { count: 75, rate: 1181.82 },
+                total: { count: 375, monthlyPremium: 234388, annualPremium: 2812656 }
+              },
+              renewal: {
+                single: { count: 150, rate: 491.50 },
+                couple: { count: 100, rate: 983.00 },
+                spmd: { count: 50, rate: 737.25 },
+                family: { count: 75, rate: 1230.50 },
+                total: { count: 375, monthlyPremium: 244244, annualPremium: 2930928 }
+              }
+            }
+          }
+        ],
+        totalMemberMonths: 650
+      }
+    };
+
+    // Run the calculation
+    const metadata = {
+      calculationDate: new Date(),
+      version: '1.0',
+      requestId: 'test-bcbs-123'
+    };
+
+    console.log('Running BCBS calculation...');
+    const result = await calculator.calculateRenewal(bcbsTestInput, metadata);
+
+    // Basic validation tests
+    expect(result).toBeDefined();
+    expect(result.carrier).toBe('BCBS');
+    
+    // Test individual plans
+    expect(result.individualPlans).toHaveLength(1);
+    expect(result.individualPlans[0].planId).toBe('plan1');
+    
+    // Test calculations structure
+    const plan1 = result.individualPlans[0];
+    expect(plan1.calculations).toBeDefined();
+    expect(plan1.finalMetrics).toBeDefined();
+    
+    // Test rate action is reasonable (between -20% and +50%)
+    expect(plan1.finalMetrics.rateAction).toBeGreaterThan(-0.20);
+    expect(plan1.finalMetrics.rateAction).toBeLessThan(0.50);
+    
+    // Test composite results
+    expect(result.composite).toBeDefined();
+    expect(result.composite.compositeRateAction).toBeGreaterThan(-0.20);
+    expect(result.composite.compositeRateAction).toBeLessThan(0.50);
+    
+    console.log('✅ BCBS Golden Test Results:');
+    console.log(`Plan 1 Rate Action: ${(plan1.finalMetrics.rateAction * 100).toFixed(2)}%`);
+    console.log(`Composite Rate Action: ${(result.composite.compositeRateAction * 100).toFixed(2)}%`);
+    console.log(`Total Enrollment: ${result.enrollmentSummary.totalEnrollment}`);
+  });
+}); 

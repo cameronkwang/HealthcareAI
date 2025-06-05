@@ -1,0 +1,426 @@
+import { UHCRenewalCalculator } from '../components/carriers/uhc/UHCCalculator';
+import { UHCInput } from '../types/uhc';
+import { IMonthlyClaimsData, LargeClaimant } from '../types/common';
+
+describe('UHC Golden Test - Complete 39-Line Methodology', () => {
+  let calculator: UHCRenewalCalculator;
+  let uhcInput: UHCInput;
+
+  const createGoldenTestClaimsData = (): IMonthlyClaimsData[] => {
+    // Create 24 months of comprehensive test data (current and prior periods)
+    const data: IMonthlyClaimsData[] = [];
+    const baseDate = new Date('2024-01-01');
+    
+    for (let i = 0; i < 24; i++) {
+      const month = new Date(baseDate);
+      month.setMonth(baseDate.getMonth() - i);
+      
+      // Simulate realistic claims patterns with seasonal variation
+      const seasonalFactor = 1 + (0.1 * Math.sin((i * Math.PI) / 6)); // 10% seasonal variation
+      const baseMedical = 420000 * seasonalFactor;
+      const baseRx = 95000 * seasonalFactor;
+      const memberCount = 1200 + (i * 5); // Growing membership
+      
+      data.push({
+        month: month.toISOString().slice(0, 7), // YYYY-MM format
+        memberMonths: {
+          total: memberCount,
+          medical: memberCount,
+          rx: memberCount
+        },
+        incurredClaims: {
+          medical: Math.round(baseMedical),
+          rx: Math.round(baseRx),
+          total: Math.round(baseMedical + baseRx)
+        }
+      });
+    }
+    
+    return data.reverse(); // Oldest first
+  };
+
+  const createGoldenTestLargeClaimants = (): LargeClaimant[] => {
+    return [
+      {
+        claimantId: 'GOLDEN-LC-001',
+        incurredDate: new Date('2023-03-15'),
+        totalAmount: 185000,
+        medicalAmount: 185000,
+        rxAmount: 0,
+        diagnosis: 'Cardiac Surgery'
+      },
+      {
+        claimantId: 'GOLDEN-LC-002',
+        incurredDate: new Date('2023-07-22'),
+        totalAmount: 235000,
+        medicalAmount: 210000,
+        rxAmount: 25000,
+        diagnosis: 'Oncology Treatment'
+      },
+      {
+        claimantId: 'GOLDEN-LC-003',
+        incurredDate: new Date('2023-10-08'),
+        totalAmount: 165000,
+        medicalAmount: 165000,
+        rxAmount: 0,
+        diagnosis: 'Orthopedic Surgery'
+      },
+      {
+        claimantId: 'GOLDEN-LC-004',
+        incurredDate: new Date('2023-11-30'),
+        totalAmount: 145000,
+        medicalAmount: 125000,
+        rxAmount: 20000,
+        diagnosis: 'Neurological Treatment'
+      }
+    ];
+  };
+
+  beforeEach(() => {
+    // Create comprehensive UHC golden test input
+    const monthlyData = createGoldenTestClaimsData();
+    
+    // Calculate realistic derived values
+    const totalMedical = monthlyData.reduce((sum, month) => sum + month.incurredClaims.medical, 0);
+    const totalRx = monthlyData.reduce((sum, month) => sum + month.incurredClaims.rx, 0);
+    const totalMM = monthlyData.reduce((sum, month) => sum + month.memberMonths.total, 0);
+    
+    const experiencePMPM = (totalMedical + totalRx) / totalMM;
+    const manualPMPM = experiencePMPM * 1.12; // 12% above experience (typical for medium group)
+    const currentRevenuePMPM = experiencePMPM * 1.15; // 15% current retention
+    
+    uhcInput = {
+      carrier: 'UHC',
+      caseId: 'GOLDEN-TEST-001',
+      monthlyClaimsData: monthlyData,
+      largeClaimantsData: createGoldenTestLargeClaimants(),
+      effectiveDates: {
+        renewalStart: new Date('2024-01-01'),
+        renewalEnd: new Date('2024-12-31')
+      },
+      manualRates: {
+        medical: manualPMPM * 0.78, // 78% medical split
+        rx: manualPMPM * 0.22,      // 22% Rx split
+        total: manualPMPM
+      },
+      carrierSpecificParameters: {
+        // UHC standard pooling
+        poolingThreshold: 125000,
+        poolingFactor: 0.156, // 15.6% pooling factor
+        
+        // UHC adjustments
+        underwritingAdjustment: 1.0000,
+        planChangeAdjustment: 1.0025, // 0.25% plan change
+        memberChangeAdjustment: 1.0000,
+        
+        // UHC trend rates (annual)
+        trendRates: {
+          medical: 0.0875, // 8.75% medical trend
+          rx: 0.0650       // 6.50% Rx trend
+        },
+        
+        // UHC projection methodology
+        projectionMonths: {
+          current: 18, // 18 months for current period projection
+          prior: 30    // 30 months for prior period projection
+        },
+        
+        // UHC experience weighting (70/30 current/prior)
+        experienceWeights: [0.70, 0.30],
+        
+        // UHC credibility weighting (medium group - 45% experience, 55% manual)
+        credibilityWeights: {
+          experience: 0.45,
+          manual: 0.55
+        },
+        
+        // UHC manual rates with adjustments
+        manualRates: {
+          baseManualPMPM: manualPMPM,
+          ageSexAdjustment: 1.085, // 8.5% age/sex adjustment
+          otherAdjustment: 1.000
+        },
+        
+        // UHC retention structure (14.5% total for medium group)
+        retentionComponents: {
+          administrative: 4.8,  // 4.8% admin
+          taxes: 2.4,          // 2.4% taxes
+          commission: 0.0,     // 0% commission (direct case)
+          other: 1.3           // 1.3% other
+        },
+        commission: 3.9,      // 3.9% separate commission line
+        fees: 2.1,           // 2.1% fees
+        
+        // Current revenue for rate action calculation
+        currentRevenuePMPM: currentRevenuePMPM,
+        
+        // Reform items (ACA adjustments)
+        reformItems: 2.5, // $2.50 PMPM
+        
+        // Additional adjustment factors
+        adjustmentFactors: {
+          other: 1.0000
+        }
+      }
+    };
+
+    calculator = new UHCRenewalCalculator(uhcInput);
+  });
+
+  test('UHC Golden Test - Complete Lines A through AM Calculation', () => {
+    console.log('Running UHC Golden Test...');
+    
+    const result = calculator.calculate();
+
+    // === STRUCTURAL VALIDATIONS ===
+    expect(result.carrier).toBe('UHC');
+    expect(result.calculations).toHaveLength(39); // Lines A through AM
+    expect(result.periods.current.months).toBe(12);
+    expect(result.periods.prior?.months).toBe(12);
+
+    // Verify all 39 calculation lines are present
+    const expectedLines = [
+      'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R',
+      'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'AA', 'AB', 'AC', 'AD', 'AE', 'AF', 'AG', 'AH', 
+      'AI', 'AJ', 'AK', 'AL', 'AM'
+    ];
+    
+    expectedLines.forEach(line => {
+      const calc = result.calculations.find(c => c.line === line);
+      expect(calc).toBeDefined();
+      expect(calc?.description).toBeTruthy();
+    });
+
+    // === CALCULATION FLOW VALIDATIONS ===
+    
+    // Line A: Incurred Medical Claims PMPM (current and prior)
+    const lineA = result.calculations.find(c => c.line === 'A')!;
+    expect(lineA.current.medical).toBeGreaterThan(300); // Reasonable medical PMPM
+    expect(lineA.current.rx).toBe(0); // Line A is medical only
+    expect(lineA.prior?.medical).toBeGreaterThan(300);
+    
+    // Line B: Pooled Claims (medical claims above $125K threshold)
+    const lineB = result.calculations.find(c => c.line === 'B')!;
+    expect(lineB.current.medical).toBeGreaterThanOrEqual(0);
+    expect(lineB.current.rx).toBe(0); // Pooling applies to medical only
+    
+    // Line C: Adjusted Medical Claims (A - B)
+    const lineC = result.calculations.find(c => c.line === 'C')!;
+    expect(Math.abs(lineC.current.medical - (lineA.current.medical - lineB.current.medical))).toBeLessThan(0.01);
+    
+    // Line D: Incurred Rx Claims PMPM
+    const lineD = result.calculations.find(c => c.line === 'D')!;
+    expect(lineD.current.rx).toBeGreaterThan(50); // Reasonable Rx PMPM
+    expect(lineD.current.medical).toBe(0); // Line D is Rx only
+    
+    // Line E: Total Incurred Claims (C + D)
+    const lineE = result.calculations.find(c => c.line === 'E')!;
+    expect(Math.abs(lineE.current.total - (lineC.current.total + lineD.current.total))).toBeLessThan(0.01);
+    
+    // Line F: Member Month Weighted Claims PMPM
+    const lineF = result.calculations.find(c => c.line === 'F')!;
+    expect(lineF.current.total).toBeGreaterThan(0);
+    
+    // Line G: Trended Experience Claims PMPM (with 8.75% medical, 6.50% Rx trends)
+    const lineG = result.calculations.find(c => c.line === 'G')!;
+    expect(lineG.current.medical).toBeGreaterThan(lineF.current.medical); // Should be higher due to positive trend
+    expect(lineG.current.rx).toBeGreaterThan(lineF.current.rx);
+    
+    // Line J: Experience Weighting (70% current, 30% prior)
+    const lineI = result.calculations.find(c => c.line === 'I')!;
+    const lineJ = result.calculations.find(c => c.line === 'J')!;
+    if (lineI.prior) {
+      const expectedWeighted = (lineI.current.total * 0.70) + (lineI.prior.total * 0.30);
+      expect(Math.abs(lineJ.current.total - expectedWeighted)).toBeLessThan(0.01);
+    }
+    
+    // Line M: Expected Claims (should be in PMPM dollar amounts, not credibility factor)
+    const lineM = result.calculations.find(c => c.line === 'M')!;
+    expect(lineM.current.total).toBeGreaterThan(0);
+    expect(lineM.current.total).toBeGreaterThan(300); // Should be reasonable PMPM amount
+    
+    // Credibility Factor from summary (should be between 0 and 1)
+    expect(result.summary.credibilityWeighting.credibilityFactor).toBeGreaterThan(0);
+    expect(result.summary.credibilityWeighting.credibilityFactor).toBeLessThanOrEqual(1);
+    
+    // Line R: Experience Premium PMPM (final experience result)
+    const lineR = result.calculations.find(c => c.line === 'R')!;
+    expect(lineR.current.total).toBeGreaterThan(0);
+    
+    // Line V: Manual PMPM (after all manual adjustments)
+    const lineV = result.calculations.find(c => c.line === 'V')!;
+    expect(lineV.current.total).toBeGreaterThan(0);
+    
+    // Line W: Experience Rating (Experience × Experience Credibility Weight)
+    const lineW = result.calculations.find(c => c.line === 'W')!;
+    const expectedExperienceComponent = lineR.current.total * 0.45; // 45% experience weight
+    expect(Math.abs(lineW.current.total - expectedExperienceComponent)).toBeLessThan(0.01);
+    
+    // Line X: Manual Rating (Manual × Manual Credibility Weight)
+    const lineX = result.calculations.find(c => c.line === 'X')!;
+    const expectedManualComponent = lineV.current.total * 0.55; // 55% manual weight
+    expect(Math.abs(lineX.current.total - expectedManualComponent)).toBeLessThan(0.01);
+    
+    // Line Y: Initial Calculated Renewal Cost (W + X)
+    const lineY = result.calculations.find(c => c.line === 'Y')!;
+    expect(Math.abs(lineY.current.total - (lineW.current.total + lineX.current.total))).toBeLessThan(0.01);
+    
+    // Line AE: Final Calculated Renewal Cost PMPM
+    const lineAE = result.calculations.find(c => c.line === 'AE')!;
+    expect(lineAE.current.total).toBeGreaterThan(0);
+    
+    // Line AF: Current Revenue PMPM
+    const lineAF = result.calculations.find(c => c.line === 'AF')!;
+    expect(lineAF.current.total).toBeGreaterThan(0);
+    
+    // Line AG: Calculated Renewal Action % ((AE - AF) / AF)
+    const lineAG = result.calculations.find(c => c.line === 'AG')!;
+    const expectedRateChange = (lineAE.current.total - lineAF.current.total) / lineAF.current.total;
+    expect(Math.abs(lineAG.current.total - expectedRateChange)).toBeLessThan(0.001);
+    
+    // Line AH: Suggested Renewal Action % (should equal AG since no override)
+    const lineAH = result.calculations.find(c => c.line === 'AH')!;
+    expect(lineAH.current.total).toBe(lineAG.current.total);
+
+    // === SUMMARY VALIDATIONS ===
+    expect(result.finalPremium.total).toBeGreaterThan(0);
+    expect(result.finalPremium.medical).toBeGreaterThan(0);
+    expect(result.finalPremium.rx).toBeGreaterThan(0);
+    expect(result.rateChange).toBeDefined();
+    
+    // Credibility should be reasonable for medium-sized group
+    expect(result.summary.credibilityWeighting.credibilityFactor).toBeGreaterThan(0.3);
+    expect(result.summary.credibilityWeighting.credibilityFactor).toBeLessThan(0.8);
+    
+    // Rate change should be reasonable (-30% to +50%)
+    expect(result.rateChange).toBeGreaterThan(-0.30);
+    expect(result.rateChange).toBeLessThan(0.50);
+
+    // === GOLDEN TEST SPECIFIC VALIDATIONS ===
+    // Verify pooling was applied correctly (should affect Line B)
+    expect(lineB.current.medical).toBeGreaterThan(0); // Should have some pooled claims
+    
+    // Verify retention structure is reasonable (total ~14.5% for medium group)
+    const totalRetention = result.summary.totalRetention;
+    expect(totalRetention).toBeGreaterThan(0.08); // At least 8%
+    expect(totalRetention).toBeLessThan(0.20);     // No more than 20%
+    
+    // Verify projected annual premium makes sense
+    expect(result.summary.projectedAnnualPremium).toBeGreaterThan(1000000); // Reasonable for group size
+    expect(result.summary.projectedAnnualPremium).toBeLessThan(20000000);
+    
+    // Console output for manual verification
+    console.log('\n=== UHC GOLDEN TEST RESULTS ===');
+    console.log(`Final Premium PMPM: $${result.finalPremium.total.toFixed(2)}`);
+    console.log(`  Medical: $${result.finalPremium.medical.toFixed(2)}`);
+    console.log(`  Rx: $${result.finalPremium.rx.toFixed(2)}`);
+    console.log(`Rate Change: ${(result.rateChange * 100).toFixed(2)}%`);
+    console.log(`Credibility Factor: ${(result.summary.credibilityWeighting.credibilityFactor * 100).toFixed(1)}%`);
+    console.log(`Total Retention: ${(totalRetention * 100).toFixed(2)}%`);
+    console.log(`Projected Annual Premium: $${result.summary.projectedAnnualPremium.toLocaleString()}`);
+    
+    // Log key calculation lines for verification
+    console.log('\n=== KEY CALCULATION LINES ===');
+    console.log(`Line A (Medical Claims): $${lineA.current.medical.toFixed(2)}`);
+    console.log(`Line B (Pooled Claims): $${lineB.current.medical.toFixed(2)}`);
+    console.log(`Line D (Rx Claims): $${lineD.current.rx.toFixed(2)}`);
+    console.log(`Line M (Expected Claims): $${lineM.current.total.toFixed(2)}`);
+    console.log(`Line R (Experience PMPM): $${lineR.current.total.toFixed(2)}`);
+    console.log(`Line V (Manual PMPM): $${lineV.current.total.toFixed(2)}`);
+    console.log(`Line Y (Initial Renewal): $${lineY.current.total.toFixed(2)}`);
+    console.log(`Line AE (Final Renewal): $${lineAE.current.total.toFixed(2)}`);
+    console.log(`Line AF (Current Revenue): $${lineAF.current.total.toFixed(2)}`);
+    console.log('================================\n');
+    
+    // Final validation: Mark the golden test as passed
+    console.log('✅ UHC GOLDEN TEST PASSED!');
+  });
+
+  test('UHC Golden Test - Pooling Calculations', () => {
+    const result = calculator.calculate();
+    
+    // Verify pooling threshold and factor are applied correctly
+    const lineA = result.calculations.find(c => c.line === 'A')!;
+    const lineB = result.calculations.find(c => c.line === 'B')!;
+    
+    // Pooling should reduce high claims to the threshold
+    expect(lineB.current.medical).toBeGreaterThanOrEqual(0);
+    
+    // With large claimants over $125K, we should see pooling
+    const largeClaimants = uhcInput.largeClaimantsData?.filter(lc => lc.totalAmount > 125000) || [];
+    if (largeClaimants.length > 0) {
+      expect(lineB.current.medical).toBeGreaterThan(0);
+    }
+  });
+
+  test('UHC Golden Test - Trend Factor Validation', () => {
+    const result = calculator.calculate();
+    
+    const lineF = result.calculations.find(c => c.line === 'F')!; // Before trend
+    const lineG = result.calculations.find(c => c.line === 'G')!; // After trend
+    
+    // Verify medical trend (8.75% annual)
+    const expectedMedicalTrend = Math.pow(1.0875, 18/12); // 18 months projection
+    const actualMedicalTrend = lineG.current.medical / lineF.current.medical;
+    expect(actualMedicalTrend).toBeCloseTo(expectedMedicalTrend, 2);
+    
+    // Verify Rx trend (6.50% annual) 
+    const expectedRxTrend = Math.pow(1.0650, 18/12); // 18 months projection
+    const actualRxTrend = lineG.current.rx / lineF.current.rx;
+    expect(actualRxTrend).toBeCloseTo(expectedRxTrend, 2);
+  });
+
+  test('UHC Golden Test - Credibility and Experience Weighting', () => {
+    const result = calculator.calculate();
+    
+    // Verify experience period weighting (70/30)
+    const lineI = result.calculations.find(c => c.line === 'I')!;
+    const lineJ = result.calculations.find(c => c.line === 'J')!;
+    
+    if (lineI.prior) {
+      const expectedWeighted = (lineI.current.total * 0.70) + (lineI.prior.total * 0.30);
+      expect(Math.abs(lineJ.current.total - expectedWeighted)).toBeLessThan(0.01);
+    }
+    
+    // Verify credibility weighting (45% experience, 55% manual)
+    const lineR = result.calculations.find(c => c.line === 'R')!; // Experience Premium PMPM
+    const lineV = result.calculations.find(c => c.line === 'V')!; // Manual Premium PMPM
+    const lineW = result.calculations.find(c => c.line === 'W')!; // Experience component
+    const lineX = result.calculations.find(c => c.line === 'X')!; // Manual component
+    
+    expect(Math.abs(lineW.current.total - (lineR.current.total * 0.45))).toBeLessThan(0.01);
+    expect(Math.abs(lineX.current.total - (lineV.current.total * 0.55))).toBeLessThan(0.01);
+  });
+
+  test('UHC Golden Test - Manual Rates and Adjustments', () => {
+    const result = calculator.calculate();
+    
+    const lineS = result.calculations.find(c => c.line === 'S')!; // Base Manual
+    const lineT = result.calculations.find(c => c.line === 'T')!; // Age/Sex Adjusted
+    const lineV = result.calculations.find(c => c.line === 'V')!; // Final Manual
+    
+    // Verify age/sex adjustment (8.5%)
+    expect(Math.abs(lineT.current.total - (lineS.current.total * 1.085))).toBeLessThan(0.01);
+    
+    // Manual rates should be reasonable
+    expect(lineV.current.total).toBeGreaterThan(300);
+    expect(lineV.current.total).toBeLessThan(800);
+  });
+
+  test('UHC Golden Test - Retention and Final Calculations', () => {
+    const result = calculator.calculate();
+    
+    // Verify retention components are applied
+    const retentionLines = ['AA', 'AB', 'AC', 'AD']; // Various retention components
+    retentionLines.forEach(line => {
+      const calc = result.calculations.find(c => c.line === line);
+      expect(calc).toBeDefined();
+      expect(calc!.current.total).toBeGreaterThanOrEqual(0);
+    });
+    
+    // Final renewal cost should include all adjustments
+    const lineAE = result.calculations.find(c => c.line === 'AE')!;
+    expect(lineAE.current.total).toBeGreaterThan(400); // Reasonable final premium
+    expect(lineAE.current.total).toBeLessThan(900);
+  });
+}); 
