@@ -4,7 +4,7 @@ import LandingPage from './components/LandingPage';
 import ProjectionDashboard from './components/dashboard/ProjectionDashboard';
 
 const App: React.FC = () => (
-  <Router>
+  <Router basename="/HealthcareAI">
     <Routes>
       <Route path="/" element={<LandingPage />} />
       <Route path="/dashboard" element={<ProjectionDashboard />} />
