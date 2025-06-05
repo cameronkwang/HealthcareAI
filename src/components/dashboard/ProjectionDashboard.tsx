@@ -625,14 +625,17 @@ const ProjectionDashboard: React.FC = () => {
       setError('Please upload data and select a carrier.');
       return;
     }
-    // Only require non-derivable fields
-    const requiredFields = ['Medical Claims', 'Pharmacy Claims'];
-    for (const field of requiredFields) {
-      if (!uploadedData[0][field]) {
-        setError(`Missing required field: ${field}`);
-        return;
-      }
+    
+    // Check if we have monthly claims data anywhere in the uploaded data
+    const hasMonthlyData = uploadedData.some(row => 
+      row.Month && (row['Medical Claims'] !== undefined || row['Pharmacy Claims'] !== undefined)
+    );
+    
+    if (!hasMonthlyData) {
+      setError('Missing required monthly claims data. Please ensure your data includes rows with Month, Medical Claims, and Pharmacy Claims columns.');
+      return;
     }
+    
     setError(null);
     const input = mapToUniversalInput(uploadedData, selectedCarrier);
     
