@@ -156,19 +156,124 @@ function mapToUniversalInput(data: any[], carrier: string): UniversalInput {
   console.log('renewalStart:', row.renewalStart, typeof row.renewalStart);
   console.log('renewalEnd:', row.renewalEnd, typeof row.renewalEnd);
   
-  // Parse the monthly claims data to find actual date range
-  const monthlyData = data.filter(row => row.Month && row['Medical Claims'] !== undefined);
-  console.log('Found', monthlyData.length, 'monthly data rows');
+  // For BCBS multi-plan data, check if we have plan-specific data
+  const isMultiPlan = carrier === 'BCBS' && data.some(row => row.planName);
+  console.log('Is multi-plan BCBS data:', isMultiPlan);
   
-  if (monthlyData.length > 0) {
-    console.log('Sample monthly data:', monthlyData[0]);
-    console.log('First month:', monthlyData[0].Month);
-    console.log('Last month:', monthlyData[monthlyData.length - 1].Month);
+  // Process monthly claims data - handle both single plan and multi-plan formats
+  let monthlyClaimsData: IMonthlyClaimsData[] = [];
+  
+  if (isMultiPlan) {
+    // Group data by plan first
+    const planNames = Array.from(new Set(data.filter(row => row.planName).map(row => row.planName)));
+    console.log('Found BCBS plans:', planNames);
+    
+    // For multi-plan, aggregate all plans' monthly data
+    const monthlyDataByMonth = new Map<string, {
+      month: string;
+      totalMedical: number;
+      totalRx: number;
+      totalMemberMonths: number;
+      planBreakdown: { [planName: string]: { medical: number; rx: number; memberMonths: number } };
+    }>();
+    
+    // Process each plan's monthly data
+    planNames.forEach(planName => {
+      const planMonthlyData = data.filter(row => 
+        row.planName === planName && row.Month && row['Medical Claims'] !== undefined
+      );
+      
+      planMonthlyData.forEach(row => {
+        const parsedDate = parseExcelDate(row.Month);
+        const monthString = `${parsedDate.getFullYear()}-${String(parsedDate.getMonth() + 1).padStart(2, '0')}`;
+        
+        const medicalClaims = parseExcelNumber(row['Medical Claims']) || 0;
+        const rxClaims = parseExcelNumber(row['Rx Claims']) || parseExcelNumber(row['Pharmacy Claims']) || 0;
+        const memberMonths = parseExcelNumber(row.memberMonthsMedical) || parseExcelNumber(row.Members) || parseExcelNumber(row['Member Months']) || 0;
+        
+        if (!monthlyDataByMonth.has(monthString)) {
+          monthlyDataByMonth.set(monthString, {
+            month: monthString,
+            totalMedical: 0,
+            totalRx: 0,
+            totalMemberMonths: 0,
+            planBreakdown: {}
+          });
+        }
+        
+        const monthData = monthlyDataByMonth.get(monthString)!;
+        monthData.totalMedical += medicalClaims;
+        monthData.totalRx += rxClaims;
+        monthData.totalMemberMonths += memberMonths;
+        monthData.planBreakdown[planName] = {
+          medical: medicalClaims,
+          rx: rxClaims,
+          memberMonths: memberMonths
+        };
+      });
+    });
+    
+    // Convert to standard format
+    monthlyClaimsData = Array.from(monthlyDataByMonth.values())
+      .sort((a, b) => a.month.localeCompare(b.month))
+      .map(monthData => ({
+        month: monthData.month,
+        memberMonths: {
+          medical: monthData.totalMemberMonths,
+          rx: monthData.totalMemberMonths,
+          total: monthData.totalMemberMonths
+        },
+        incurredClaims: {
+          medical: monthData.totalMedical,
+          rx: monthData.totalRx,
+          total: monthData.totalMedical + monthData.totalRx
+        },
+        // Store plan breakdown for BCBS calculations
+        planBreakdown: monthData.planBreakdown
+      }));
+    
+    console.log('Processed multi-plan monthly data:', monthlyClaimsData.length, 'months');
+  } else {
+    // Standard single-plan processing
+    monthlyClaimsData = data
+      .filter(row => row.Month && row['Medical Claims'] !== undefined)
+      .map(row => {
+        const parsedDate = parseExcelDate(row.Month);
+        const monthString = `${parsedDate.getFullYear()}-${String(parsedDate.getMonth() + 1).padStart(2, '0')}`;
+        
+        const memberMonthsMed = parseExcelNumber(row.memberMonthsMedical) || parseExcelNumber(row.Members) || parseExcelNumber(row['Member Months']) || 0;
+        const memberMonthsRx = parseExcelNumber(row.memberMonthsRx) || memberMonthsMed;
+        const medicalClaims = parseExcelNumber(row['Medical Claims']) || 0;
+        const rxClaims = parseExcelNumber(row['Rx Claims']) || parseExcelNumber(row['Pharmacy Claims']) || 0;
+
+        return {
+          month: monthString,
+          memberMonths: {
+            medical: memberMonthsMed,
+            rx: memberMonthsRx,
+            total: Math.max(memberMonthsMed, memberMonthsRx)
+          },
+          incurredClaims: {
+            medical: medicalClaims,
+            rx: rxClaims,
+            total: medicalClaims + rxClaims
+          }
+        };
+      });
+  }
+  
+  // Parse the monthly claims data to find actual date range
+  console.log('Found', monthlyClaimsData.length, 'monthly data rows');
+  
+  if (monthlyClaimsData.length > 0) {
+    console.log('Sample monthly data:', monthlyClaimsData[0]);
+    console.log('First month:', monthlyClaimsData[0].month);
+    console.log('Last month:', monthlyClaimsData[monthlyClaimsData.length - 1].month);
   }
   
   // Parse dates from monthly data and sort them
-  const monthDates = monthlyData
-    .map(row => parseExcelDate(row.Month))
+  const monthDates = monthlyClaimsData
+    .map(row => new Date(row.month + '-01'))
     .filter(date => date.getFullYear() > 1970) // Filter out invalid dates
     .sort((a, b) => a.getTime() - b.getTime());
   
@@ -206,194 +311,278 @@ function mapToUniversalInput(data: any[], carrier: string): UniversalInput {
     }
   }
 
+  // Process enrollment data - handle both single and multi-plan
   const enrollmentDataArr: EnrollmentData[] = data.filter(r => r.enrollmentMonth).map((r) => ({
     month: r.enrollmentMonth,
     subscribers: parseExcelNumber(r.enrollmentSubscribers) || 0,
     members: parseExcelNumber(r.enrollmentMembers) || 0,
+    planName: r.planName || null, // Store plan name for multi-plan data
   }));
-  // Attach enrollmentDataArr to the first row for BCBS param mapping
-  if (row) row._enrollmentDataArray = enrollmentDataArr;
   
-  // Process monthly claims data
-  const monthlyClaimsData: IMonthlyClaimsData[] = data
-    .filter(row => row.Month && row['Medical Claims'] !== undefined)
-    .map(row => {
-      const parsedDate = parseExcelDate(row.Month);
-      const monthString = `${parsedDate.getFullYear()}-${String(parsedDate.getMonth() + 1).padStart(2, '0')}`;
-      
-      const memberMonthsMed = parseExcelNumber(row.memberMonthsMedical) || parseExcelNumber(row.Members) || parseExcelNumber(row['Member Months']) || 0;
-      const memberMonthsRx = parseExcelNumber(row.memberMonthsRx) || memberMonthsMed;
-      const medicalClaims = parseExcelNumber(row['Medical Claims']) || 0;
-      const rxClaims = parseExcelNumber(row['Rx Claims']) || parseExcelNumber(row['Pharmacy Claims']) || 0;
-
-      return {
-        month: monthString,
-        memberMonths: {
-          medical: memberMonthsMed,
-          rx: memberMonthsRx,
-          total: Math.max(memberMonthsMed, memberMonthsRx)
-        },
-        incurredClaims: {
-          medical: medicalClaims,
-          rx: rxClaims,
-          total: medicalClaims + rxClaims
-        }
-      };
-    });
-
-  console.log(`Processed ${monthlyClaimsData.length} months of claims data:`, monthlyClaimsData.slice(0, 3));
-
-  // Debug: Log the structure of all data to understand the Excel format
-  console.log('🔍 DEBUGGING: All Excel data structure:');
-  data.forEach((row, index) => {
-    if (index < 10) { // Only log first 10 rows to avoid spam
-      console.log(`Row ${index}:`, {
-        keys: Object.keys(row),
-        claimantRelatedFields: Object.keys(row).filter(key => 
-          key.toLowerCase().includes('claimant') || 
-          key.toLowerCase().includes('claim') ||
-          key.toLowerCase().includes('member') ||
-          key.toLowerCase().includes('id')
-        ),
-        amountFields: Object.keys(row).filter(key => 
-          key.toLowerCase().includes('amount') ||
-          key.toLowerCase().includes('claims') ||
-          key.toLowerCase().includes('medical') ||
-          key.toLowerCase().includes('rx') ||
-          key.toLowerCase().includes('pharmacy')
-        ),
-        sampleValues: row
-      });
-    }
-  });
-
-  // Enhanced large claimant processing with guaranteed date assignment within periods
-  const largeClaimantsData: LargeClaimant[] = data
-    .filter((row, index) => {
-      // First, check if this looks like a monthly summary row (skip those)
-      const hasMonthField = row.Month || row.month || row.monthYear;
-      if (hasMonthField) {
-        console.log(`⏭️ Skipping monthly summary row ${index}:`, row);
-        return false;
-      }
-
-      // Look for rows that have claimant identifiers
-      const hasClaimantId = row['Claimant Number'] || 
-        row.largeClaimantId || 
-        row.ClaimantId ||
-        row.claimantNumber ||
-        row['Member ID'] ||
-        row.memberId;
-      
-      // Look for rows with claim amounts (be more specific about thresholds)
-      const totalClaims = parseExcelNumber(row['Total Claims']);
-      const largeClaimantTotal = parseExcelNumber(row.largeClaimantTotal);
-      const claimAmount = parseExcelNumber(row['Claim Amount']);
-      const totalAmount = parseExcelNumber(row['Total Amount']);
-      
-      // Use a higher threshold to avoid picking up small claims or summary data
-      const significantAmount = Math.max(totalClaims, largeClaimantTotal, claimAmount, totalAmount);
-      const hasLargeClaim = significantAmount > 50000; // Raised threshold to $50k
-      
-      const isLargeClaimant = hasClaimantId && hasLargeClaim;
-      
-      if (hasClaimantId || hasLargeClaim) {
-        console.log(`🔍 Evaluating row ${index} for large claimant:`, {
-          hasClaimantId: !!hasClaimantId,
-          hasLargeClaim,
-          significantAmount,
-          isLargeClaimant,
-          claimantIdValue: hasClaimantId,
-          availableAmountFields: Object.keys(row).filter(key => 
-            key.toLowerCase().includes('amount') || key.toLowerCase().includes('claims')
-          ),
-          rowData: row
+  // For multi-plan BCBS data, group enrollment by month
+  if (isMultiPlan && enrollmentDataArr.length > 0) {
+    const enrollmentByMonth = new Map<string, EnrollmentData>();
+    
+    enrollmentDataArr.forEach(enrollment => {
+      if (!enrollmentByMonth.has(enrollment.month)) {
+        enrollmentByMonth.set(enrollment.month, {
+          month: enrollment.month,
+          subscribers: 0,
+          members: 0
         });
       }
       
-      return isLargeClaimant;
-    })
-    .map((row, index) => {
-      // Try to extract claimant ID from various possible column names
-      const claimantId = row['Claimant Number'] || 
-                        row.largeClaimantId || 
-                        row.ClaimantId ||
-                        row.claimantNumber ||
-                        row['Member ID'] ||
-                        row.memberId ||
-                        `LC${index + 1}`;
+      const monthData = enrollmentByMonth.get(enrollment.month)!;
+      monthData.subscribers += enrollment.subscribers;
+      monthData.members += enrollment.members;
+    });
+    
+    // Replace with aggregated data
+    enrollmentDataArr.splice(0, enrollmentDataArr.length, ...Array.from(enrollmentByMonth.values()));
+  }
+  
+  // Attach enrollmentDataArr to the first row for BCBS param mapping
+  if (row) row._enrollmentDataArray = enrollmentDataArr;
 
-      // Smart date assignment using the actual monthly claims data
-      let incurredDate: Date | null = null;
-      
-      // If we have monthly claims data, use it to determine safe date ranges
-      if (monthlyClaimsData.length > 0) {
-        // Sort the monthly data to get the actual range
-        const sortedMonthlyData = [...monthlyClaimsData].sort((a, b) => 
-          new Date(a.month).getTime() - new Date(b.month).getTime()
-        );
+  console.log(`Processed ${monthlyClaimsData.length} months of claims data:`, monthlyClaimsData.slice(0, 3));
+
+  // Enhanced large claimant processing - handle multi-plan structure
+  let largeClaimantsData: LargeClaimant[] = [];
+  
+  if (isMultiPlan) {
+    // For multi-plan data, process claimants for each plan
+    const planNames = Array.from(new Set(data.filter(row => row.planName).map(row => row.planName)));
+    
+    planNames.forEach(planName => {
+      const planClaimants = data.filter((row, index) => {
+        // Skip monthly summary rows
+        const hasMonthField = row.Month || row.month || row.monthYear;
+        if (hasMonthField) return false;
         
-        const oldestMonth = sortedMonthlyData[0].month; // "2023-01"
-        const newestMonth = sortedMonthlyData[sortedMonthlyData.length - 1].month; // "2024-12"
+        // Only process rows for this specific plan
+        if (row.planName !== planName) return false;
+
+        // Look for rows that have claimant identifiers
+        const hasClaimantId = row['Claimant Number'] || 
+          row.largeClaimantId || 
+          row.ClaimantId ||
+          row.claimantNumber ||
+          row['Member ID'] ||
+          row.memberId;
         
-        // Parse the newest month to get a safe date within that month
-        const [year, month] = newestMonth.split('-').map(Number);
-        // Use the 15th of the most recent month - this should always be within the month
-        incurredDate = new Date(year, month - 1, 15);
-      }
-      
-      // Fallback to a more recent date if we don't have monthly data
-      if (!incurredDate) {
-        incurredDate = new Date('2024-06-15'); // Safe middle date
-      }
+        // Look for rows with claim amounts (be more specific about thresholds)
+        const totalClaims = parseExcelNumber(row['Total Claims']);
+        const largeClaimantTotal = parseExcelNumber(row.largeClaimantTotal);
+        const claimAmount = parseExcelNumber(row['Claim Amount']);
+        const totalAmount = parseExcelNumber(row['Total Amount']);
+        
+        // Use a higher threshold to avoid picking up small claims or summary data
+        const significantAmount = Math.max(totalClaims, largeClaimantTotal, claimAmount, totalAmount);
+        const hasLargeClaim = significantAmount > 50000; // Raised threshold to $50k
+        
+        return hasClaimantId && hasLargeClaim;
+      })
+      .map((row, index) => {
+        // Try to extract claimant ID from various possible column names
+        const claimantId = row['Claimant Number'] || 
+                          row.largeClaimantId || 
+                          row.ClaimantId ||
+                          row.claimantNumber ||
+                          row['Member ID'] ||
+                          row.memberId ||
+                          `${planName}-LC${index + 1}`;
 
-      // Extract amounts with detailed debugging
-      const totalAmount = parseExcelNumber(row['Total Claims']) || 
-                         parseExcelNumber(row.largeClaimantTotal) || 
-                         parseExcelNumber(row.totalAmount) || 
-                         parseExcelNumber(row['Total Amount']) ||
-                         parseExcelNumber(row['Claim Amount']) ||
-                         0;
+        // Smart date assignment using the actual monthly claims data
+        let incurredDate: Date | null = null;
+        
+        // If we have monthly claims data, use it to determine safe date ranges
+        if (monthlyClaimsData.length > 0) {
+          // Sort the monthly data to get the actual range
+          const sortedMonthlyData = [...monthlyClaimsData].sort((a, b) => 
+            new Date(a.month).getTime() - new Date(b.month).getTime()
+          );
+          
+          const newestMonth = sortedMonthlyData[sortedMonthlyData.length - 1].month; // "2023-12"
+          
+          // Parse the newest month to get a safe date within that month
+          const [year, month] = newestMonth.split('-').map(Number);
+          // Use the 15th of the most recent month - this should always be within the month
+          incurredDate = new Date(year, month - 1, 15);
+        }
+        
+        // Fallback to a more recent date if we don't have monthly data
+        if (!incurredDate) {
+          incurredDate = new Date('2023-06-15'); // Safe middle date
+        }
 
-      const medicalAmount = parseExcelNumber(row['Medical Claims']) || 
-                           parseExcelNumber(row.medicalAmount) || 
-                           parseExcelNumber(row['Medical Amount']) ||
-                           parseExcelNumber(row['Medical']) ||
-                           totalAmount * 0.85; // Default split: 85% medical, 15% Rx
+        // Extract amounts with detailed debugging
+        const totalAmount = parseExcelNumber(row['Total Claims']) || 
+                           parseExcelNumber(row.largeClaimantTotal) || 
+                           parseExcelNumber(row.totalAmount) || 
+                           parseExcelNumber(row['Total Amount']) ||
+                           parseExcelNumber(row['Claim Amount']) ||
+                           0;
 
-      const rxAmount = parseExcelNumber(row['Rx Claims']) || 
-                      parseExcelNumber(row.rxAmount) || 
-                      parseExcelNumber(row['Pharmacy Claims']) ||
-                      parseExcelNumber(row['Rx Amount']) ||
-                      parseExcelNumber(row['Pharmacy']) ||
-                      totalAmount * 0.15;
+        const medicalAmount = parseExcelNumber(row['Medical Claims']) || 
+                             parseExcelNumber(row.medicalAmount) || 
+                             parseExcelNumber(row['Medical Amount']) ||
+                             parseExcelNumber(row['Medical']) ||
+                             totalAmount * 0.85; // Default split: 85% medical, 15% Rx
 
-      console.log(`🏥 Processing claimant ${claimantId}:`, {
-        rawRow: row,
-        extractedAmounts: {
+        const rxAmount = parseExcelNumber(row['Rx Claims']) || 
+                        parseExcelNumber(row.rxAmount) || 
+                        parseExcelNumber(row['Pharmacy Claims']) ||
+                        parseExcelNumber(row['Rx Amount']) ||
+                        parseExcelNumber(row['Pharmacy']) ||
+                        totalAmount * 0.15;
+
+        console.log(`🏥 Processing ${planName} claimant ${claimantId}:`, {
+          totalAmount,
+          medicalAmount,
+          rxAmount
+        });
+
+        return {
+          claimantId: String(claimantId),
+          incurredDate,
           totalAmount,
           medicalAmount,
           rxAmount,
-          calculatedTotal: medicalAmount + rxAmount
-        },
-        availableColumns: Object.keys(row).filter(key => 
-          key.toLowerCase().includes('claim') || 
-          key.toLowerCase().includes('medical') || 
-          key.toLowerCase().includes('rx') || 
-          key.toLowerCase().includes('pharmacy') ||
-          key.toLowerCase().includes('amount')
-        )
-      });
+          planName: planName // Store plan name for multi-plan tracking
+        };
+      })
+      .filter(claimant => claimant.totalAmount > 0);
+      
+      largeClaimantsData.push(...planClaimants);
+    });
+  } else {
+    // Standard single-plan large claimant processing
+    largeClaimantsData = data
+      .filter((row, index) => {
+        // First, check if this looks like a monthly summary row (skip those)
+        const hasMonthField = row.Month || row.month || row.monthYear;
+        if (hasMonthField) {
+          console.log(`⏭️ Skipping monthly summary row ${index}:`, row);
+          return false;
+        }
 
-      return {
-        claimantId: String(claimantId),
-        incurredDate,
-        totalAmount,
-        medicalAmount,
-        rxAmount
-      };
-    })
-    .filter(claimant => claimant.totalAmount > 0);
+        // Look for rows that have claimant identifiers
+        const hasClaimantId = row['Claimant Number'] || 
+          row.largeClaimantId || 
+          row.ClaimantId ||
+          row.claimantNumber ||
+          row['Member ID'] ||
+          row.memberId;
+        
+        // Look for rows with claim amounts (be more specific about thresholds)
+        const totalClaims = parseExcelNumber(row['Total Claims']);
+        const largeClaimantTotal = parseExcelNumber(row.largeClaimantTotal);
+        const claimAmount = parseExcelNumber(row['Claim Amount']);
+        const totalAmount = parseExcelNumber(row['Total Amount']);
+        
+        // Use a higher threshold to avoid picking up small claims or summary data
+        const significantAmount = Math.max(totalClaims, largeClaimantTotal, claimAmount, totalAmount);
+        const hasLargeClaim = significantAmount > 50000; // Raised threshold to $50k
+        
+        const isLargeClaimant = hasClaimantId && hasLargeClaim;
+        
+        if (hasClaimantId || hasLargeClaim) {
+          console.log(`🔍 Evaluating row ${index} for large claimant:`, {
+            hasClaimantId: !!hasClaimantId,
+            hasLargeClaim,
+            significantAmount,
+            isLargeClaimant,
+            claimantIdValue: hasClaimantId,
+            availableAmountFields: Object.keys(row).filter(key => 
+              key.toLowerCase().includes('amount') || key.toLowerCase().includes('claims')
+            ),
+            rowData: row
+          });
+        }
+        
+        return isLargeClaimant;
+      })
+      .map((row, index) => {
+        // Try to extract claimant ID from various possible column names
+        const claimantId = row['Claimant Number'] || 
+                          row.largeClaimantId || 
+                          row.ClaimantId ||
+                          row.claimantNumber ||
+                          row['Member ID'] ||
+                          row.memberId ||
+                          `LC${index + 1}`;
+
+        // Smart date assignment using the actual monthly claims data
+        let incurredDate: Date | null = null;
+        
+        // If we have monthly claims data, use it to determine safe date ranges
+        if (monthlyClaimsData.length > 0) {
+          // Sort the monthly data to get the actual range
+          const sortedMonthlyData = [...monthlyClaimsData].sort((a, b) => 
+            new Date(a.month).getTime() - new Date(b.month).getTime()
+          );
+          
+          const newestMonth = sortedMonthlyData[sortedMonthlyData.length - 1].month; // "2023-12"
+          
+          // Parse the newest month to get a safe date within that month
+          const [year, month] = newestMonth.split('-').map(Number);
+          // Use the 15th of the most recent month - this should always be within the month
+          incurredDate = new Date(year, month - 1, 15);
+        }
+        
+        // Fallback to a more recent date if we don't have monthly data
+        if (!incurredDate) {
+          incurredDate = new Date('2024-06-15'); // Safe middle date
+        }
+
+        // Extract amounts with detailed debugging
+        const totalAmount = parseExcelNumber(row['Total Claims']) || 
+                           parseExcelNumber(row.largeClaimantTotal) || 
+                           parseExcelNumber(row.totalAmount) || 
+                           parseExcelNumber(row['Total Amount']) ||
+                           parseExcelNumber(row['Claim Amount']) ||
+                           0;
+
+        const medicalAmount = parseExcelNumber(row['Medical Claims']) || 
+                             parseExcelNumber(row.medicalAmount) || 
+                             parseExcelNumber(row['Medical Amount']) ||
+                             parseExcelNumber(row['Medical']) ||
+                             totalAmount * 0.85; // Default split: 85% medical, 15% Rx
+
+        const rxAmount = parseExcelNumber(row['Rx Claims']) || 
+                        parseExcelNumber(row.rxAmount) || 
+                        parseExcelNumber(row['Pharmacy Claims']) ||
+                        parseExcelNumber(row['Rx Amount']) ||
+                        parseExcelNumber(row['Pharmacy']) ||
+                        totalAmount * 0.15;
+
+        console.log(`🏥 Processing claimant ${claimantId}:`, {
+          rawRow: row,
+          extractedAmounts: {
+            totalAmount,
+            medicalAmount,
+            rxAmount,
+            calculatedTotal: medicalAmount + rxAmount
+          },
+          availableColumns: Object.keys(row).filter(key => 
+            key.toLowerCase().includes('claim') || 
+            key.toLowerCase().includes('medical') || 
+            key.toLowerCase().includes('rx') || 
+            key.toLowerCase().includes('pharmacy') ||
+            key.toLowerCase().includes('amount')
+          )
+        });
+
+        return {
+          claimantId: String(claimantId),
+          incurredDate,
+          totalAmount,
+          medicalAmount,
+          rxAmount
+        };
+      })
+      .filter(claimant => claimant.totalAmount > 0);
+  }
 
   console.log(`Found ${largeClaimantsData.length} large claimants:`, largeClaimantsData);
 
@@ -427,6 +616,14 @@ function mapToUniversalInput(data: any[], carrier: string): UniversalInput {
     },
     carrierSpecificParameters: mapToCarrierParams(row, carrier),
     enrollmentData: enrollmentDataArr,
+    // Add multi-plan specific data for BCBS
+    ...(isMultiPlan && {
+      multiPlanData: {
+        planCount: row.planCount || 4,
+        totalGroupSize: row.totalGroupSize || 0,
+        planNames: Array.from(new Set(data.filter(row => row.planName).map(row => row.planName)))
+      }
+    })
   };
 }
 
@@ -656,131 +853,97 @@ const ProjectionDashboard: React.FC = () => {
     setUploadedData([
       // Group information row
       {
-        caseId: 'SAMPLE-GROUP-2024',
+        caseId: 'BCBS-MULTIPLAN-2024',
         renewalStart: '2024-01-01',
         renewalEnd: '2024-12-31',
         manualRateMedical: 450.00,
         manualRateRx: 125.00,
-        // Carrier-specific parameters
-        poolingThreshold: 175000, // Aetna default
-        poolingLevel: 175000,
-        trendFactor: 1.06,
-        networkAdjustment: 1.02,
-        demographicAdjustment: 0.98,
-        // Enrollment data
-        enrollmentMonth: '2023-01',
-        enrollmentSubscribers: 250,
-        enrollmentMembers: 580,
+        // BCBS-specific parameters
+        poolingThreshold: 100000, // BCBS default
+        poolingLevel: 100000,
+        trendFactor: 1.04,
+        networkAdjustment: 1.01,
+        demographicAdjustment: 0.99,
+        // Multi-plan indicator
+        planCount: 4,
+        totalGroupSize: 850,
       },
       
-      // Monthly claims data (24 months of experience)
-      { Month: 'Jan-23', 'Medical Claims': 185000, 'Pharmacy Claims': 45000, memberMonthsMedical: 580, memberMonthsRx: 580, 'Member Months': 580 },
-      { Month: 'Feb-23', 'Medical Claims': 220000, 'Pharmacy Claims': 52000, memberMonthsMedical: 575, memberMonthsRx: 575, 'Member Months': 575 },
-      { Month: 'Mar-23', 'Medical Claims': 195000, 'Pharmacy Claims': 48000, memberMonthsMedical: 585, memberMonthsRx: 585, 'Member Months': 585 },
-      { Month: 'Apr-23', 'Medical Claims': 310000, 'Pharmacy Claims': 55000, memberMonthsMedical: 590, memberMonthsRx: 590, 'Member Months': 590 },
-      { Month: 'May-23', 'Medical Claims': 175000, 'Pharmacy Claims': 42000, memberMonthsMedical: 595, memberMonthsRx: 595, 'Member Months': 595 },
-      { Month: 'Jun-23', 'Medical Claims': 240000, 'Pharmacy Claims': 58000, memberMonthsMedical: 600, memberMonthsRx: 600, 'Member Months': 600 },
-      { Month: 'Jul-23', 'Medical Claims': 280000, 'Pharmacy Claims': 62000, memberMonthsMedical: 605, memberMonthsRx: 605, 'Member Months': 605 },
-      { Month: 'Aug-23', 'Medical Claims': 320000, 'Pharmacy Claims': 68000, memberMonthsMedical: 610, memberMonthsRx: 610, 'Member Months': 610 },
-      { Month: 'Sep-23', 'Medical Claims': 190000, 'Pharmacy Claims': 45000, memberMonthsMedical: 615, memberMonthsRx: 615, 'Member Months': 615 },
-      { Month: 'Oct-23', 'Medical Claims': 265000, 'Pharmacy Claims': 55000, memberMonthsMedical: 620, memberMonthsRx: 620, 'Member Months': 620 },
-      { Month: 'Nov-23', 'Medical Claims': 450000, 'Pharmacy Claims': 72000, memberMonthsMedical: 625, memberMonthsRx: 625, 'Member Months': 625 },
-      { Month: 'Dec-23', 'Medical Claims': 380000, 'Pharmacy Claims': 85000, memberMonthsMedical: 630, memberMonthsRx: 630, 'Member Months': 630 },
-      { Month: 'Jan-24', 'Medical Claims': 210000, 'Pharmacy Claims': 48000, memberMonthsMedical: 635, memberMonthsRx: 635, 'Member Months': 635 },
-      { Month: 'Feb-24', 'Medical Claims': 275000, 'Pharmacy Claims': 62000, memberMonthsMedical: 640, memberMonthsRx: 640, 'Member Months': 640 },
-      { Month: 'Mar-24', 'Medical Claims': 320000, 'Pharmacy Claims': 68000, memberMonthsMedical: 645, memberMonthsRx: 645, 'Member Months': 645 },
-      { Month: 'Apr-24', 'Medical Claims': 185000, 'Pharmacy Claims': 45000, memberMonthsMedical: 650, memberMonthsRx: 650, 'Member Months': 650 },
-      { Month: 'May-24', 'Medical Claims': 395000, 'Pharmacy Claims': 75000, memberMonthsMedical: 655, memberMonthsRx: 655, 'Member Months': 655 },
-      { Month: 'Jun-24', 'Medical Claims': 230000, 'Pharmacy Claims': 52000, memberMonthsMedical: 660, memberMonthsRx: 660, 'Member Months': 660 },
-      { Month: 'Jul-24', 'Medical Claims': 410000, 'Pharmacy Claims': 78000, memberMonthsMedical: 665, memberMonthsRx: 665, 'Member Months': 665 },
-      { Month: 'Aug-24', 'Medical Claims': 295000, 'Pharmacy Claims': 65000, memberMonthsMedical: 670, memberMonthsRx: 670, 'Member Months': 670 },
-      { Month: 'Sep-24', 'Medical Claims': 340000, 'Pharmacy Claims': 72000, memberMonthsMedical: 675, memberMonthsRx: 675, 'Member Months': 675 },
-      { Month: 'Oct-24', 'Medical Claims': 285000, 'Pharmacy Claims': 58000, memberMonthsMedical: 680, memberMonthsRx: 680, 'Member Months': 680 },
-      { Month: 'Nov-24', 'Medical Claims': 375000, 'Pharmacy Claims': 68000, memberMonthsMedical: 685, memberMonthsRx: 685, 'Member Months': 685 },
-      { Month: 'Dec-24', 'Medical Claims': 420000, 'Pharmacy Claims': 85000, memberMonthsMedical: 690, memberMonthsRx: 690, 'Member Months': 690 },
+      // PLAN 1: PPO High - Largest plan
+      { planName: 'PPO High', planCode: 'PPO-H', enrollmentMonth: '2023-01', enrollmentSubscribers: 180, enrollmentMembers: 420 },
+      { planName: 'PPO High', Month: 'Jan-23', 'Medical Claims': 125000, 'Pharmacy Claims': 32000, memberMonthsMedical: 420, memberMonthsRx: 420, 'Member Months': 420 },
+      { planName: 'PPO High', Month: 'Feb-23', 'Medical Claims': 145000, 'Pharmacy Claims': 38000, memberMonthsMedical: 415, memberMonthsRx: 415, 'Member Months': 415 },
+      { planName: 'PPO High', Month: 'Mar-23', 'Medical Claims': 135000, 'Pharmacy Claims': 35000, memberMonthsMedical: 425, memberMonthsRx: 425, 'Member Months': 425 },
+      { planName: 'PPO High', Month: 'Apr-23', 'Medical Claims': 210000, 'Pharmacy Claims': 42000, memberMonthsMedical: 430, memberMonthsRx: 430, 'Member Months': 430 },
+      { planName: 'PPO High', Month: 'May-23', 'Medical Claims': 115000, 'Pharmacy Claims': 28000, memberMonthsMedical: 435, memberMonthsRx: 435, 'Member Months': 435 },
+      { planName: 'PPO High', Month: 'Jun-23', 'Medical Claims': 165000, 'Pharmacy Claims': 40000, memberMonthsMedical: 440, memberMonthsRx: 440, 'Member Months': 440 },
+      { planName: 'PPO High', Month: 'Jul-23', 'Medical Claims': 185000, 'Pharmacy Claims': 45000, memberMonthsMedical: 445, memberMonthsRx: 445, 'Member Months': 445 },
+      { planName: 'PPO High', Month: 'Aug-23', 'Medical Claims': 225000, 'Pharmacy Claims': 52000, memberMonthsMedical: 450, memberMonthsRx: 450, 'Member Months': 450 },
+      { planName: 'PPO High', Month: 'Sep-23', 'Medical Claims': 135000, 'Pharmacy Claims': 32000, memberMonthsMedical: 455, memberMonthsRx: 455, 'Member Months': 455 },
+      { planName: 'PPO High', Month: 'Oct-23', 'Medical Claims': 175000, 'Pharmacy Claims': 38000, memberMonthsMedical: 460, memberMonthsRx: 460, 'Member Months': 460 },
+      { planName: 'PPO High', Month: 'Nov-23', 'Medical Claims': 295000, 'Pharmacy Claims': 58000, memberMonthsMedical: 465, memberMonthsRx: 465, 'Member Months': 465 },
+      { planName: 'PPO High', Month: 'Dec-23', 'Medical Claims': 255000, 'Pharmacy Claims': 65000, memberMonthsMedical: 470, memberMonthsRx: 470, 'Member Months': 470 },
       
-      // Large claimants data (realistic high-cost claims)
-      {
-        'Claimant Number': 'LC001',
-        'Member ID': 'MBR-789012',
-        'Total Claims': 285000,
-        'Medical Claims': 260000,
-        'Pharmacy Claims': 25000,
-        incurredDate: '2024-03-15',
-        claimantDescription: 'Cancer treatment - chemotherapy and surgery'
-      },
-      {
-        'Claimant Number': 'LC002', 
-        'Member ID': 'MBR-345678',
-        'Total Claims': 195000,
-        'Medical Claims': 180000,
-        'Pharmacy Claims': 15000,
-        incurredDate: '2024-07-22',
-        claimantDescription: 'Cardiac surgery and rehabilitation'
-      },
-      {
-        'Claimant Number': 'LC003',
-        'Member ID': 'MBR-901234',
-        'Total Claims': 320000,
-        'Medical Claims': 295000,
-        'Pharmacy Claims': 25000,
-        incurredDate: '2024-05-10',
-        claimantDescription: 'Organ transplant and immunosuppressive therapy'
-      },
-      {
-        'Claimant Number': 'LC004',
-        'Member ID': 'MBR-567890',
-        'Total Claims': 125000,
-        'Medical Claims': 115000,
-        'Pharmacy Claims': 10000,
-        incurredDate: '2024-08-05',
-        claimantDescription: 'Neurological surgery and ongoing treatment'
-      },
-      {
-        'Claimant Number': 'LC005',
-        'Member ID': 'MBR-123456',
-        'Total Claims': 240000,
-        'Medical Claims': 220000,
-        'Pharmacy Claims': 20000,
-        incurredDate: '2024-11-18',
-        claimantDescription: 'Premature birth with NICU stay'
-      },
-      {
-        'Claimant Number': 'LC006',
-        'Member ID': 'MBR-678901',
-        'Total Claims': 85000,
-        'Medical Claims': 75000,
-        'Pharmacy Claims': 10000,
-        incurredDate: '2024-09-12',
-        claimantDescription: 'Orthopedic surgery and physical therapy'
-      },
+      // PLAN 1: Large Claimants
+      { planName: 'PPO High', 'Claimant Number': 'PPO-H-LC001', 'Member ID': 'PPO-MBR-001', 'Total Claims': 225000, 'Medical Claims': 205000, 'Pharmacy Claims': 20000, incurredDate: '2023-11-15' },
+      { planName: 'PPO High', 'Claimant Number': 'PPO-H-LC002', 'Member ID': 'PPO-MBR-002', 'Total Claims': 135000, 'Medical Claims': 125000, 'Pharmacy Claims': 10000, incurredDate: '2023-08-22' },
       
-      // Additional enrollment data points for BCBS calculations
-      { enrollmentMonth: '2023-02', enrollmentSubscribers: 255, enrollmentMembers: 590 },
-      { enrollmentMonth: '2023-03', enrollmentSubscribers: 260, enrollmentMembers: 600 },
-      { enrollmentMonth: '2023-04', enrollmentSubscribers: 265, enrollmentMembers: 610 },
-      { enrollmentMonth: '2023-05', enrollmentSubscribers: 270, enrollmentMembers: 620 },
-      { enrollmentMonth: '2023-06', enrollmentSubscribers: 275, enrollmentMembers: 635 },
-      { enrollmentMonth: '2023-07', enrollmentSubscribers: 280, enrollmentMembers: 645 },
-      { enrollmentMonth: '2023-08', enrollmentSubscribers: 285, enrollmentMembers: 655 },
-      { enrollmentMonth: '2023-09', enrollmentSubscribers: 290, enrollmentMembers: 665 },
-      { enrollmentMonth: '2023-10', enrollmentSubscribers: 295, enrollmentMembers: 675 },
-      { enrollmentMonth: '2023-11', enrollmentSubscribers: 300, enrollmentMembers: 685 },
-      { enrollmentMonth: '2023-12', enrollmentSubscribers: 305, enrollmentMembers: 695 },
-      { enrollmentMonth: '2024-01', enrollmentSubscribers: 310, enrollmentMembers: 705 },
-      { enrollmentMonth: '2024-02', enrollmentSubscribers: 315, enrollmentMembers: 715 },
-      { enrollmentMonth: '2024-03', enrollmentSubscribers: 320, enrollmentMembers: 725 },
-      { enrollmentMonth: '2024-04', enrollmentSubscribers: 325, enrollmentMembers: 735 },
-      { enrollmentMonth: '2024-05', enrollmentSubscribers: 330, enrollmentMembers: 745 },
-      { enrollmentMonth: '2024-06', enrollmentSubscribers: 335, enrollmentMembers: 755 },
-      { enrollmentMonth: '2024-07', enrollmentSubscribers: 340, enrollmentMembers: 765 },
-      { enrollmentMonth: '2024-08', enrollmentSubscribers: 345, enrollmentMembers: 775 },
-      { enrollmentMonth: '2024-09', enrollmentSubscribers: 350, enrollmentMembers: 785 },
-      { enrollmentMonth: '2024-10', enrollmentSubscribers: 355, enrollmentMembers: 795 },
-      { enrollmentMonth: '2024-11', enrollmentSubscribers: 360, enrollmentMembers: 805 },
-      { enrollmentMonth: '2024-12', enrollmentSubscribers: 365, enrollmentMembers: 815 },
+      // PLAN 2: PPO Standard - Medium plan
+      { planName: 'PPO Standard', planCode: 'PPO-S', enrollmentMonth: '2023-01', enrollmentSubscribers: 120, enrollmentMembers: 285 },
+      { planName: 'PPO Standard', Month: 'Jan-23', 'Medical Claims': 82000, 'Pharmacy Claims': 22000, memberMonthsMedical: 285, memberMonthsRx: 285, 'Member Months': 285 },
+      { planName: 'PPO Standard', Month: 'Feb-23', 'Medical Claims': 95000, 'Pharmacy Claims': 25000, memberMonthsMedical: 280, memberMonthsRx: 280, 'Member Months': 280 },
+      { planName: 'PPO Standard', Month: 'Mar-23', 'Medical Claims': 88000, 'Pharmacy Claims': 23000, memberMonthsMedical: 290, memberMonthsRx: 290, 'Member Months': 290 },
+      { planName: 'PPO Standard', Month: 'Apr-23', 'Medical Claims': 125000, 'Pharmacy Claims': 28000, memberMonthsMedical: 295, memberMonthsRx: 295, 'Member Months': 295 },
+      { planName: 'PPO Standard', Month: 'May-23', 'Medical Claims': 75000, 'Pharmacy Claims': 20000, memberMonthsMedical: 300, memberMonthsRx: 300, 'Member Months': 300 },
+      { planName: 'PPO Standard', Month: 'Jun-23', 'Medical Claims': 105000, 'Pharmacy Claims': 26000, memberMonthsMedical: 305, memberMonthsRx: 305, 'Member Months': 305 },
+      { planName: 'PPO Standard', Month: 'Jul-23', 'Medical Claims': 115000, 'Pharmacy Claims': 29000, memberMonthsMedical: 310, memberMonthsRx: 310, 'Member Months': 310 },
+      { planName: 'PPO Standard', Month: 'Aug-23', 'Medical Claims': 135000, 'Pharmacy Claims': 32000, memberMonthsMedical: 315, memberMonthsRx: 315, 'Member Months': 315 },
+      { planName: 'PPO Standard', Month: 'Sep-23', 'Medical Claims': 85000, 'Pharmacy Claims': 22000, memberMonthsMedical: 320, memberMonthsRx: 320, 'Member Months': 320 },
+      { planName: 'PPO Standard', Month: 'Oct-23', 'Medical Claims': 115000, 'Pharmacy Claims': 26000, memberMonthsMedical: 325, memberMonthsRx: 325, 'Member Months': 325 },
+      { planName: 'PPO Standard', Month: 'Nov-23', 'Medical Claims': 185000, 'Pharmacy Claims': 35000, memberMonthsMedical: 330, memberMonthsRx: 330, 'Member Months': 330 },
+      { planName: 'PPO Standard', Month: 'Dec-23', 'Medical Claims': 165000, 'Pharmacy Claims': 38000, memberMonthsMedical: 335, memberMonthsRx: 335, 'Member Months': 335 },
+      
+      // PLAN 2: Large Claimants
+      { planName: 'PPO Standard', 'Claimant Number': 'PPO-S-LC001', 'Member ID': 'PPO-S-MBR-001', 'Total Claims': 165000, 'Medical Claims': 155000, 'Pharmacy Claims': 10000, incurredDate: '2023-11-08' },
+      
+      // PLAN 3: HDHP (High Deductible) - Growing plan
+      { planName: 'HDHP', planCode: 'HDHP-1', enrollmentMonth: '2023-01', enrollmentSubscribers: 85, enrollmentMembers: 195 },
+      { planName: 'HDHP', Month: 'Jan-23', 'Medical Claims': 45000, 'Pharmacy Claims': 12000, memberMonthsMedical: 195, memberMonthsRx: 195, 'Member Months': 195 },
+      { planName: 'HDHP', Month: 'Feb-23', 'Medical Claims': 52000, 'Pharmacy Claims': 14000, memberMonthsMedical: 200, memberMonthsRx: 200, 'Member Months': 200 },
+      { planName: 'HDHP', Month: 'Mar-23', 'Medical Claims': 48000, 'Pharmacy Claims': 13000, memberMonthsMedical: 205, memberMonthsRx: 205, 'Member Months': 205 },
+      { planName: 'HDHP', Month: 'Apr-23', 'Medical Claims': 68000, 'Pharmacy Claims': 15000, memberMonthsMedical: 210, memberMonthsRx: 210, 'Member Months': 210 },
+      { planName: 'HDHP', Month: 'May-23', 'Medical Claims': 42000, 'Pharmacy Claims': 11000, memberMonthsMedical: 215, memberMonthsRx: 215, 'Member Months': 215 },
+      { planName: 'HDHP', Month: 'Jun-23', 'Medical Claims': 58000, 'Pharmacy Claims': 14000, memberMonthsMedical: 220, memberMonthsRx: 220, 'Member Months': 220 },
+      { planName: 'HDHP', Month: 'Jul-23', 'Medical Claims': 65000, 'Pharmacy Claims': 16000, memberMonthsMedical: 225, memberMonthsRx: 225, 'Member Months': 225 },
+      { planName: 'HDHP', Month: 'Aug-23', 'Medical Claims': 78000, 'Pharmacy Claims': 18000, memberMonthsMedical: 230, memberMonthsRx: 230, 'Member Months': 230 },
+      { planName: 'HDHP', Month: 'Sep-23', 'Medical Claims': 55000, 'Pharmacy Claims': 13000, memberMonthsMedical: 235, memberMonthsRx: 235, 'Member Months': 235 },
+      { planName: 'HDHP', Month: 'Oct-23', 'Medical Claims': 72000, 'Pharmacy Claims': 15000, memberMonthsMedical: 240, memberMonthsRx: 240, 'Member Months': 240 },
+      { planName: 'HDHP', Month: 'Nov-23', 'Medical Claims': 95000, 'Pharmacy Claims': 20000, memberMonthsMedical: 245, memberMonthsRx: 245, 'Member Months': 245 },
+      { planName: 'HDHP', Month: 'Dec-23', 'Medical Claims': 85000, 'Pharmacy Claims': 22000, memberMonthsMedical: 250, memberMonthsRx: 250, 'Member Months': 250 },
+      
+      // PLAN 3: Large Claimants
+      { planName: 'HDHP', 'Claimant Number': 'HDHP-LC001', 'Member ID': 'HDHP-MBR-001', 'Total Claims': 125000, 'Medical Claims': 115000, 'Pharmacy Claims': 10000, incurredDate: '2023-08-12' },
+      
+      // PLAN 4: EPO (Exclusive Provider) - Smallest plan
+      { planName: 'EPO', planCode: 'EPO-1', enrollmentMonth: '2023-01', enrollmentSubscribers: 45, enrollmentMembers: 105 },
+      { planName: 'EPO', Month: 'Jan-23', 'Medical Claims': 28000, 'Pharmacy Claims': 8000, memberMonthsMedical: 105, memberMonthsRx: 105, 'Member Months': 105 },
+      { planName: 'EPO', Month: 'Feb-23', 'Medical Claims': 32000, 'Pharmacy Claims': 9000, memberMonthsMedical: 110, memberMonthsRx: 110, 'Member Months': 110 },
+      { planName: 'EPO', Month: 'Mar-23', 'Medical Claims': 29000, 'Pharmacy Claims': 8500, memberMonthsMedical: 115, memberMonthsRx: 115, 'Member Months': 115 },
+      { planName: 'EPO', Month: 'Apr-23', 'Medical Claims': 42000, 'Pharmacy Claims': 10000, memberMonthsMedical: 120, memberMonthsRx: 120, 'Member Months': 120 },
+      { planName: 'EPO', Month: 'May-23', 'Medical Claims': 25000, 'Pharmacy Claims': 7500, memberMonthsMedical: 125, memberMonthsRx: 125, 'Member Months': 125 },
+      { planName: 'EPO', Month: 'Jun-23', 'Medical Claims': 35000, 'Pharmacy Claims': 9000, memberMonthsMedical: 130, memberMonthsRx: 130, 'Member Months': 130 },
+      { planName: 'EPO', Month: 'Jul-23', 'Medical Claims': 38000, 'Pharmacy Claims': 9500, memberMonthsMedical: 135, memberMonthsRx: 135, 'Member Months': 135 },
+      { planName: 'EPO', Month: 'Aug-23', 'Medical Claims': 45000, 'Pharmacy Claims': 11000, memberMonthsMedical: 140, memberMonthsRx: 140, 'Member Months': 140 },
+      { planName: 'EPO', Month: 'Sep-23', 'Medical Claims': 32000, 'Pharmacy Claims': 8500, memberMonthsMedical: 145, memberMonthsRx: 145, 'Member Months': 145 },
+      { planName: 'EPO', Month: 'Oct-23', 'Medical Claims': 41000, 'Pharmacy Claims': 9500, memberMonthsMedical: 150, memberMonthsRx: 150, 'Member Months': 150 },
+      { planName: 'EPO', Month: 'Nov-23', 'Medical Claims': 55000, 'Pharmacy Claims': 12000, memberMonthsMedical: 155, memberMonthsRx: 155, 'Member Months': 155 },
+      { planName: 'EPO', Month: 'Dec-23', 'Medical Claims': 48000, 'Pharmacy Claims': 13000, memberMonthsMedical: 160, memberMonthsRx: 160, 'Member Months': 160 },
+      
+      // PLAN 4: Large Claimants
+      { planName: 'EPO', 'Claimant Number': 'EPO-LC001', 'Member ID': 'EPO-MBR-001', 'Total Claims': 185000, 'Medical Claims': 175000, 'Pharmacy Claims': 10000, incurredDate: '2023-12-05' },
+      { planName: 'EPO', 'Claimant Number': 'EPO-LC002', 'Member ID': 'EPO-MBR-002', 'Total Claims': 95000, 'Medical Claims': 88000, 'Pharmacy Claims': 7000, incurredDate: '2023-09-18' },
     ]);
-    setSelectedCarrier('AETNA');
+    setSelectedCarrier('BCBS');
     setResult(null);
     setError(null);
   };
