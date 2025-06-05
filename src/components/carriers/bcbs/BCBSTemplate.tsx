@@ -31,10 +31,11 @@ const BCBSTemplate: React.FC<BCBSTemplateProps> = ({ result }) => {
 
   // Extract multi-plan data from the calculation result
   const multiPlanData = (result as any).multiPlanData;
+  const detailedResults = (result as any).detailedResults?.bcbs;
   const planNames = multiPlanData?.planNames || ['Plan 1', 'Plan 2', 'Plan 3', 'Plan 4'];
   
-  // Mock data structure for demonstration - in real implementation this would come from BCBS calculator
-  const planData = planNames.map((planName: string, index: number) => ({
+  // Use actual calculation results if available, otherwise fall back to mock data
+  const planData = detailedResults?.individualPlans || planNames.map((planName: string, index: number) => ({
     planName,
     planCode: ['PPO-H', 'PPO-S', 'HDHP-1', 'EPO-1'][index] || `PLAN-${index + 1}`,
     enrollment: {
@@ -59,22 +60,29 @@ const BCBSTemplate: React.FC<BCBSTemplateProps> = ({ result }) => {
     },
     projection: {
       trendFactor: 1.04,
-      projectedPMPM: [471.03, 456.85, 360.15, 234.08][index] || 416.00,
+      projectedPMPM: detailedResults?.individualPlans?.[index]?.finalMetrics?.projectedPremiumPMPM || [471.03, 456.85, 360.15, 234.08][index] || 416.00,
       targetLossRatio: 0.84,
-      requiredPremiumPMPM: [560.75, 543.87, 428.75, 278.67][index] || 495.24,
-      currentPremiumPMPM: [525.00, 510.00, 395.00, 265.00][index] || 475.00,
-      rateChangeRequired: [0.068, 0.066, 0.085, 0.051][index] || 0.043
+      requiredPremiumPMPM: detailedResults?.individualPlans?.[index]?.finalMetrics?.requiredPremiumPMPM || [560.75, 543.87, 428.75, 278.67][index] || 495.24,
+      currentPremiumPMPM: detailedResults?.individualPlans?.[index]?.finalMetrics?.currentPremiumPMPM || [525.00, 510.00, 395.00, 265.00][index] || 475.00,
+      rateChangeRequired: detailedResults?.individualPlans?.[index]?.finalMetrics?.rateAction || [0.068, 0.066, 0.085, 0.051][index] || 0.043
     }
   }));
 
   // Calculate composite results
-  const totalMemberMonths = planData.reduce((sum: number, plan: any) => sum + plan.experience.memberMonths, 0);
-  const totalEnrollment = planData.reduce((sum: number, plan: any) => sum + plan.enrollment.members, 0);
-  const weightedCurrentPremium = planData.reduce((sum: number, plan: any) => 
-    sum + (plan.projection.currentPremiumPMPM * plan.experience.memberMonths), 0) / totalMemberMonths;
-  const weightedRequiredPremium = planData.reduce((sum: number, plan: any) => 
-    sum + (plan.projection.requiredPremiumPMPM * plan.experience.memberMonths), 0) / totalMemberMonths;
-  const compositeRateChange = (weightedRequiredPremium / weightedCurrentPremium) - 1;
+  const totalMemberMonths = planData.reduce((sum: number, plan: any) => sum + (plan.experience?.memberMonths || plan.memberMonths?.currentTotal || 0), 0);
+  const totalEnrollment = planData.reduce((sum: number, plan: any) => sum + (plan.enrollment?.members || plan.enrollment?.current?.total?.count || 0), 0);
+  
+  // Use detailed results if available, otherwise calculate from plan data
+  const weightedCurrentPremium = detailedResults?.composite?.weightedAverages?.currentPMPM || 
+    planData.reduce((sum: number, plan: any) => 
+      sum + ((plan.projection?.currentPremiumPMPM || plan.finalMetrics?.currentPremiumPMPM) * (plan.experience?.memberMonths || plan.memberMonths?.currentTotal || 0)), 0) / (totalMemberMonths || 1);
+  
+  const weightedRequiredPremium = detailedResults?.composite?.weightedAverages?.requiredPMPM || 
+    planData.reduce((sum: number, plan: any) => 
+      sum + ((plan.projection?.requiredPremiumPMPM || plan.finalMetrics?.requiredPremiumPMPM) * (plan.experience?.memberMonths || plan.memberMonths?.currentTotal || 0)), 0) / (totalMemberMonths || 1);
+  
+  const compositeRateChange = detailedResults?.composite?.compositeRateAction || 
+    (weightedRequiredPremium / weightedCurrentPremium) - 1;
 
   return (
     <div className="space-y-8">

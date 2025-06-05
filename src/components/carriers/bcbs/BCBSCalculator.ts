@@ -76,6 +76,9 @@ export class BCBSCalculator {
   ): Promise<BCBSPlanResult> {
     const calculations: BCBSCalculationStep[] = [];
     
+    // Header information (Lines 1-2a)
+    this.addHeaderSteps(calculations, planParams, planData);
+    
     // Medical calculations (Lines 3-9)
     const medicalResults = this.calculateMedicalSection(planData, planParams, calculations);
     
@@ -393,325 +396,379 @@ export class BCBSCalculator {
     calculations: BCBSCalculationStep[]
   ): BCBSTotalResults {
     // Line 10: Total Projected PMPM
-    const currentTotalProjectedPMPM = medicalResults.projectedPMPM.current + pharmacyResults.projectedPMPM.current;
-    const renewalTotalProjectedPMPM = medicalResults.projectedPMPM.renewal + pharmacyResults.projectedPMPM.renewal;
+    const totalProjectedPMPMCurrent = medicalResults.projectedPMPM.current + pharmacyResults.projectedPMPM.current;
+    const totalProjectedPMPMRenewal = medicalResults.projectedPMPM.renewal + pharmacyResults.projectedPMPM.renewal;
     
     calculations.push({
       lineNumber: '10',
       description: 'Total Projected PMPM',
-      formula: 'projectedMedicalPMPM + projectedPharmacyPMPM',
+      formula: 'Projected Medical PMPM + Projected Pharmacy PMPM',
       inputs: { 
-        currentTotal: currentTotalProjectedPMPM,
-        renewalTotal: renewalTotalProjectedPMPM
+        currentTotal: totalProjectedPMPMCurrent,
+        renewalTotal: totalProjectedPMPMRenewal,
+        medicalCurrent: medicalResults.projectedPMPM.current,
+        pharmacyCurrent: pharmacyResults.projectedPMPM.current
       },
-      result: currentTotalProjectedPMPM,
-      unit: '$'
+      result: totalProjectedPMPMCurrent,
+      unit: '$',
+      section: 'total'
     });
 
     // Line 11a: FFS Age Adjustment for PMPM
-    const currentAgeAdjustedPMPM = currentTotalProjectedPMPM * planParams.adjustmentFactors.ffsAge.current;
-    const renewalAgeAdjustedPMPM = renewalTotalProjectedPMPM * planParams.adjustmentFactors.ffsAge.renewal;
-    
     calculations.push({
       lineNumber: '11a',
       description: 'FFS Age Adjustment for PMPM',
-      formula: 'totalProjectedPMPM * ffsAgeAdjustment',
+      formula: 'Age adjustment factor by period',
       inputs: { 
         currentAdjustment: planParams.adjustmentFactors.ffsAge.current,
         renewalAdjustment: planParams.adjustmentFactors.ffsAge.renewal
       },
       result: planParams.adjustmentFactors.ffsAge.current,
-      unit: 'factor'
+      unit: 'factor',
+      section: 'total'
     });
 
     // Line 12: Sub Total FFS Age Adj. PMPM
+    const ffsAgeAdjustedCurrent = totalProjectedPMPMCurrent * planParams.adjustmentFactors.ffsAge.current;
+    const ffsAgeAdjustedRenewal = totalProjectedPMPMRenewal * planParams.adjustmentFactors.ffsAge.renewal;
+    
     calculations.push({
       lineNumber: '12',
       description: 'Sub Total FFS Age Adj. PMPM',
-      formula: 'totalProjectedPMPM * ffsAgeAdjustment',
+      formula: 'Total Projected PMPM × FFS Age Adjustment',
       inputs: { 
-        currentAdjusted: currentAgeAdjustedPMPM,
-        renewalAdjusted: renewalAgeAdjustedPMPM
+        currentAdjusted: ffsAgeAdjustedCurrent,
+        renewalAdjusted: ffsAgeAdjustedRenewal
       },
-      result: currentAgeAdjustedPMPM,
-      unit: '$'
+      result: ffsAgeAdjustedCurrent,
+      unit: '$',
+      section: 'total'
     });
 
     // Line 13: Total Pooling Charges
-    const currentPoolingCharges = this.calculatePoolingCharges(planData, planParams, 'current');
-    const renewalPoolingCharges = this.calculatePoolingCharges(planData, planParams, 'renewal');
+    const poolingChargesCurrent = this.calculatePoolingCharges(planData, planParams, 'current');
+    const poolingChargesRenewal = this.calculatePoolingCharges(planData, planParams, 'renewal');
     
     calculations.push({
       lineNumber: '13',
       description: 'Total Pooling Charges',
-      formula: 'poolingCharges / memberMonths',
+      formula: 'Pooled claims spread across member months',
       inputs: { 
-        currentCharges: currentPoolingCharges,
-        renewalCharges: renewalPoolingCharges
+        currentCharges: poolingChargesCurrent,
+        renewalCharges: poolingChargesRenewal
       },
-      result: currentPoolingCharges,
-      unit: '$'
+      result: poolingChargesCurrent,
+      unit: '$',
+      section: 'total'
     });
 
     // Line 14: Benefit Adjustment
     calculations.push({
       lineNumber: '14',
       description: '(*) Benefit Adjustment',
-      formula: 'benefitAdjustmentFactor',
-      inputs: { 
-        adjustmentFactor: planParams.adjustmentFactors.benefitAdjustment
-      },
+      formula: 'Benefit design adjustment factor',
+      inputs: { factor: planParams.adjustmentFactors.benefitAdjustment },
       result: planParams.adjustmentFactors.benefitAdjustment,
-      unit: 'factor'
+      unit: 'factor',
+      section: 'total'
     });
 
     // Line 15: Adjusted Projected PMPM
-    const currentAdjustedPMPM = (currentAgeAdjustedPMPM + currentPoolingCharges) * planParams.adjustmentFactors.benefitAdjustment;
-    const renewalAdjustedPMPM = (renewalAgeAdjustedPMPM + renewalPoolingCharges) * planParams.adjustmentFactors.benefitAdjustment;
+    const adjustedProjectedPMPMCurrent = (ffsAgeAdjustedCurrent + poolingChargesCurrent) * planParams.adjustmentFactors.benefitAdjustment;
+    const adjustedProjectedPMPMRenewal = (ffsAgeAdjustedRenewal + poolingChargesRenewal) * planParams.adjustmentFactors.benefitAdjustment;
     
     calculations.push({
       lineNumber: '15',
       description: 'Adjusted Projected PMPM',
-      formula: '(ageAdjustedPMPM + poolingCharges) * benefitAdjustment',
+      formula: '(FFS Age Adj + Pooling Charges) × Benefit Adjustment',
       inputs: { 
-        currentAdjusted: currentAdjustedPMPM,
-        renewalAdjusted: renewalAdjustedPMPM
+        currentAdjusted: adjustedProjectedPMPMCurrent,
+        renewalAdjusted: adjustedProjectedPMPMRenewal
       },
-      result: currentAdjustedPMPM,
-      unit: '$'
+      result: adjustedProjectedPMPMCurrent,
+      unit: '$',
+      section: 'total'
     });
 
     // Line 16: Experience Weights
     calculations.push({
       lineNumber: '16',
       description: 'Experience Weights',
-      formula: 'currentWeight / renewalWeight',
-      inputs: { 
-        currentWeight: planParams.experienceWeights.current,
-        renewalWeight: planParams.experienceWeights.renewal
-      },
+      formula: 'Current vs Renewal experience weighting',
+      inputs: planParams.experienceWeights,
       result: planParams.experienceWeights.current,
-      unit: '%'
+      unit: 'percentage',
+      section: 'total'
     });
 
     // Line 17: Weighted Experience Claims
-    const weightedExperienceClaims = (currentAdjustedPMPM * planParams.experienceWeights.current) + 
-                                    (renewalAdjustedPMPM * planParams.experienceWeights.renewal);
+    const weightedExperienceClaims = 
+      adjustedProjectedPMPMCurrent * planParams.experienceWeights.current +
+      adjustedProjectedPMPMRenewal * planParams.experienceWeights.renewal;
     
     calculations.push({
       lineNumber: '17',
       description: 'Weighted Experience Claims',
-      formula: '(currentPMPM * currentWeight) + (renewalPMPM * renewalWeight)',
+      formula: 'Current × Current Weight + Renewal × Renewal Weight',
       inputs: { 
-        weightedClaims: weightedExperienceClaims
+        weightedClaims: weightedExperienceClaims,
+        currentClaims: adjustedProjectedPMPMCurrent,
+        renewalClaims: adjustedProjectedPMPMRenewal,
+        currentWeight: planParams.experienceWeights.current,
+        renewalWeight: planParams.experienceWeights.renewal
       },
       result: weightedExperienceClaims,
-      unit: '$'
+      unit: '$',
+      section: 'total'
     });
 
     // Line 18: Member Based Charges
-    const memberBasedCharges = planParams.memberBasedCharges ? 
-      (planParams.memberBasedCharges.current * planParams.experienceWeights.current) + 
-      (planParams.memberBasedCharges.renewal * planParams.experienceWeights.renewal) : 0;
+    const memberBasedChargesCurrent = planParams.memberBasedCharges?.current || 0;
+    const memberBasedChargesRenewal = planParams.memberBasedCharges?.renewal || 0;
+    const weightedMemberBasedCharges = 
+      memberBasedChargesCurrent * planParams.experienceWeights.current +
+      memberBasedChargesRenewal * planParams.experienceWeights.renewal;
     
     calculations.push({
       lineNumber: '18',
       description: 'Member Based Charges',
-      formula: 'memberBasedCharges (if applicable)',
+      formula: 'Weighted member-based charges PMPM',
       inputs: { 
-        charges: memberBasedCharges
+        currentCharges: memberBasedChargesCurrent,
+        renewalCharges: memberBasedChargesRenewal,
+        weightedCharges: weightedMemberBasedCharges
       },
-      result: memberBasedCharges,
-      unit: '$'
+      result: weightedMemberBasedCharges,
+      unit: '$',
+      section: 'total'
     });
 
     // Line 19: Projected Experience Claim PMPM (incl MBC)
-    const projectedExperienceClaimPMPM = weightedExperienceClaims + memberBasedCharges;
+    const projectedExperienceClaimPMPM = weightedExperienceClaims + weightedMemberBasedCharges;
     
     calculations.push({
       lineNumber: '19',
       description: 'Projected Experience Claim PMPM (incl MBC)',
-      formula: 'weightedExperienceClaims + memberBasedCharges',
+      formula: 'Weighted Experience Claims + Member Based Charges',
       inputs: { 
-        projectedClaims: projectedExperienceClaimPMPM
+        experienceClaims: weightedExperienceClaims,
+        memberBasedCharges: weightedMemberBasedCharges,
+        total: projectedExperienceClaimPMPM
       },
       result: projectedExperienceClaimPMPM,
-      unit: '$'
+      unit: '$',
+      section: 'total'
     });
 
     // Line 20: Manual Claims PMPM
-    const manualClaimsPMPM = (planParams.manualClaimsPMPM.current * planParams.experienceWeights.current) + 
-                            (planParams.manualClaimsPMPM.renewal * planParams.experienceWeights.renewal);
+    const manualClaimsPMPMCurrent = planParams.manualClaimsPMPM.current;
+    const manualClaimsPMPMRenewal = planParams.manualClaimsPMPM.renewal;
+    const weightedManualClaimsPMPM = 
+      manualClaimsPMPMCurrent * planParams.experienceWeights.current +
+      manualClaimsPMPMRenewal * planParams.experienceWeights.renewal;
     
     calculations.push({
       lineNumber: '20',
       description: 'Manual Claims PMPM',
-      formula: '(currentManual * currentWeight) + (renewalManual * renewalWeight)',
+      formula: 'Weighted manual rates PMPM',
       inputs: { 
-        manualClaims: manualClaimsPMPM
+        currentManual: manualClaimsPMPMCurrent,
+        renewalManual: manualClaimsPMPMRenewal,
+        weightedManual: weightedManualClaimsPMPM
       },
-      result: manualClaimsPMPM,
-      unit: '$'
+      result: weightedManualClaimsPMPM,
+      unit: '$',
+      section: 'total'
     });
 
     // Line 21: Credibility Factor
     calculations.push({
       lineNumber: '21',
       description: 'Credibility Factor',
-      formula: 'credibilityFactor',
-      inputs: { 
-        credibility: planParams.credibilityFactor
-      },
+      formula: 'Experience credibility weighting',
+      inputs: { credibility: planParams.credibilityFactor },
       result: planParams.credibilityFactor,
-      unit: 'factor'
+      unit: 'factor',
+      section: 'total'
     });
 
     // Line 22: Credibility Adjusted Claim PMPM
-    const credibilityAdjustedPMPM = (projectedExperienceClaimPMPM * planParams.credibilityFactor) + 
-                                   (manualClaimsPMPM * (1 - planParams.credibilityFactor));
+    const credibilityAdjustedPMPM = 
+      projectedExperienceClaimPMPM * planParams.credibilityFactor +
+      weightedManualClaimsPMPM * (1 - planParams.credibilityFactor);
     
     calculations.push({
       lineNumber: '22',
       description: 'Credibility Adjusted Claim PMPM',
-      formula: '(experienceClaims * credibility) + (manualClaims * (1 - credibility))',
+      formula: 'Experience × Credibility + Manual × (1 - Credibility)',
       inputs: { 
-        credibilityAdjusted: credibilityAdjustedPMPM
+        experiencePMPM: projectedExperienceClaimPMPM,
+        manualPMPM: weightedManualClaimsPMPM,
+        credibility: planParams.credibilityFactor,
+        adjustedPMPM: credibilityAdjustedPMPM
       },
       result: credibilityAdjustedPMPM,
-      unit: '$'
+      unit: '$',
+      section: 'total'
     });
 
     // Line 23: Retention PMPM
-    const retentionPMPM = (planParams.retentionComponents.retentionPMPM.current * planParams.experienceWeights.current) + 
-                         (planParams.retentionComponents.retentionPMPM.renewal * planParams.experienceWeights.renewal);
+    const retentionPMPMCurrent = planParams.retentionComponents.retentionPMPM.current;
+    const retentionPMPMRenewal = planParams.retentionComponents.retentionPMPM.renewal;
+    const weightedRetentionPMPM = 
+      retentionPMPMCurrent * planParams.experienceWeights.current +
+      retentionPMPMRenewal * planParams.experienceWeights.renewal;
     
     calculations.push({
       lineNumber: '23',
       description: 'Retention PMPM',
-      formula: '(currentRetention * currentWeight) + (renewalRetention * renewalWeight)',
+      formula: 'Weighted retention costs PMPM',
       inputs: { 
-        retention: retentionPMPM
+        currentRetention: retentionPMPMCurrent,
+        renewalRetention: retentionPMPMRenewal,
+        weightedRetention: weightedRetentionPMPM
       },
-      result: retentionPMPM,
-      unit: '$'
+      result: weightedRetentionPMPM,
+      unit: '$',
+      section: 'total'
     });
 
     // Line 24: PPO Premium Tax PMPM
-    const ppoPremiumTaxPMPM = (planParams.retentionComponents.ppoPremiumTax.current * planParams.experienceWeights.current) + 
-                             (planParams.retentionComponents.ppoPremiumTax.renewal * planParams.experienceWeights.renewal);
+    const ppoPremiumTaxCurrent = planParams.retentionComponents.ppoPremiumTax.current;
+    const ppoPremiumTaxRenewal = planParams.retentionComponents.ppoPremiumTax.renewal;
+    const weightedPPOPremiumTax = 
+      ppoPremiumTaxCurrent * planParams.experienceWeights.current +
+      ppoPremiumTaxRenewal * planParams.experienceWeights.renewal;
     
     calculations.push({
       lineNumber: '24',
       description: 'PPO Premium Tax PMPM',
-      formula: '(currentTax * currentWeight) + (renewalTax * renewalWeight)',
+      formula: 'Weighted PPO premium tax PMPM',
       inputs: { 
-        premiumTax: ppoPremiumTaxPMPM
+        currentTax: ppoPremiumTaxCurrent,
+        renewalTax: ppoPremiumTaxRenewal,
+        weightedTax: weightedPPOPremiumTax
       },
-      result: ppoPremiumTaxPMPM,
-      unit: '$'
+      result: weightedPPOPremiumTax,
+      unit: '$',
+      section: 'total'
     });
 
     // Line 24a: Affordable Care Act Adjustments PMPM
-    const acaAdjustmentsPMPM = (planParams.retentionComponents.acaAdjustments.current * planParams.experienceWeights.current) + 
-                              (planParams.retentionComponents.acaAdjustments.renewal * planParams.experienceWeights.renewal);
+    const acaAdjustmentsCurrent = planParams.retentionComponents.acaAdjustments.current;
+    const acaAdjustmentsRenewal = planParams.retentionComponents.acaAdjustments.renewal;
+    const weightedACAAdj = 
+      acaAdjustmentsCurrent * planParams.experienceWeights.current +
+      acaAdjustmentsRenewal * planParams.experienceWeights.renewal;
     
     calculations.push({
       lineNumber: '24a',
       description: 'Affordable Care Act Adjustments PMPM',
-      formula: '(currentACA * currentWeight) + (renewalACA * renewalWeight)',
+      formula: 'Weighted ACA adjustments PMPM',
       inputs: { 
-        acaAdjustments: acaAdjustmentsPMPM
+        currentACA: acaAdjustmentsCurrent,
+        renewalACA: acaAdjustmentsRenewal,
+        weightedACA: weightedACAAdj
       },
-      result: acaAdjustmentsPMPM,
-      unit: '$'
+      result: weightedACAAdj,
+      unit: '$',
+      section: 'total'
     });
 
     // Line 25: Underwriter Adjustment Factor
     calculations.push({
       lineNumber: '25',
       description: 'Underwriter Adjustment Factor',
-      formula: 'underwriterAdjustmentFactor',
-      inputs: { 
-        adjustment: planParams.adjustmentFactors.underwriterAdjustment
-      },
+      formula: 'Underwriter discretionary adjustment',
+      inputs: { factor: planParams.adjustmentFactors.underwriterAdjustment },
       result: planParams.adjustmentFactors.underwriterAdjustment,
-      unit: 'factor'
+      unit: 'factor',
+      section: 'total'
     });
 
     // Line 26: Required Premium PMPM
-    const requiredPremiumPMPM = (credibilityAdjustedPMPM + retentionPMPM + ppoPremiumTaxPMPM + acaAdjustmentsPMPM) * 
-                               planParams.adjustmentFactors.underwriterAdjustment;
+    const requiredPremiumPMPM = (credibilityAdjustedPMPM + weightedRetentionPMPM + weightedPPOPremiumTax + weightedACAAdj) * planParams.adjustmentFactors.underwriterAdjustment;
     
     calculations.push({
       lineNumber: '26',
       description: 'Required Premium PMPM',
-      formula: '(credibilityAdjusted + retention + tax + aca) * underwriterAdjustment',
+      formula: '(Claims + Retention + Tax + ACA) × Underwriter Adj',
       inputs: { 
-        required: requiredPremiumPMPM
+        claimsPMPM: credibilityAdjustedPMPM,
+        retentionPMPM: weightedRetentionPMPM,
+        taxPMPM: weightedPPOPremiumTax,
+        acaPMPM: weightedACAAdj,
+        underwriterAdj: planParams.adjustmentFactors.underwriterAdjustment,
+        requiredPMPM: requiredPremiumPMPM
       },
       result: requiredPremiumPMPM,
-      unit: '$'
+      unit: '$',
+      section: 'total'
     });
 
     // Line 27: Pathway to Savings Adjustment
     calculations.push({
       lineNumber: '27',
       description: 'Pathway to Savings Adjustment',
-      formula: 'pathwayToSavingsAdjustment',
-      inputs: { 
-        adjustment: planParams.adjustmentFactors.pathwayToSavings
-      },
+      formula: 'P2S discount factor',
+      inputs: { factor: planParams.adjustmentFactors.pathwayToSavings },
       result: planParams.adjustmentFactors.pathwayToSavings,
-      unit: 'factor'
+      unit: 'factor',
+      section: 'total'
     });
 
     // Line 27a: Post P2S Adj. Required Premium PMPM
-    const projectedPremiumPMPM = requiredPremiumPMPM * planParams.adjustmentFactors.pathwayToSavings;
+    const postP2SAdjRequiredPMPM = requiredPremiumPMPM * planParams.adjustmentFactors.pathwayToSavings;
     
     calculations.push({
       lineNumber: '27a',
       description: 'Post P2S Adj. Required Premium PMPM',
-      formula: 'requiredPremium * pathwayToSavingsAdjustment',
+      formula: 'Required Premium × P2S Adjustment',
       inputs: { 
-        projectedPremium: projectedPremiumPMPM
+        beforeP2S: requiredPremiumPMPM,
+        p2sAdjustment: planParams.adjustmentFactors.pathwayToSavings,
+        afterP2S: postP2SAdjRequiredPMPM
       },
-      result: projectedPremiumPMPM,
-      unit: '$'
+      result: postP2SAdjRequiredPMPM,
+      unit: '$',
+      section: 'total'
     });
 
     // Line 28: Current Premium PMPM
     calculations.push({
       lineNumber: '28',
       description: 'Current Premium PMPM',
-      formula: 'currentPremiumPMPM',
-      inputs: { 
-        currentPremium: planParams.currentPremiumPMPM
-      },
+      formula: 'Current premium based on latest enrollment',
+      inputs: { currentPremium: planParams.currentPremiumPMPM },
       result: planParams.currentPremiumPMPM,
-      unit: '$'
+      unit: '$',
+      section: 'total'
     });
 
     // Line 29: Rate Action
-    const rateAction = (projectedPremiumPMPM / planParams.currentPremiumPMPM) - 1;
+    const rateAction = (postP2SAdjRequiredPMPM / planParams.currentPremiumPMPM) - 1;
     
     calculations.push({
       lineNumber: '29',
       description: 'Rate Action',
-      formula: '(projectedPremium / currentPremium) - 1',
+      formula: '(Required Premium / Current Premium) - 1',
       inputs: { 
+        requiredPremium: postP2SAdjRequiredPMPM,
+        currentPremium: planParams.currentPremiumPMPM,
         rateAction: rateAction
       },
       result: rateAction,
-      unit: '%'
+      unit: 'percentage',
+      section: 'total'
     });
 
     return {
-      totalProjectedPMPM: currentTotalProjectedPMPM,
-      adjustedProjectedPMPM: currentAdjustedPMPM,
+      totalProjectedPMPM: totalProjectedPMPMCurrent,
+      adjustedProjectedPMPM: adjustedProjectedPMPMCurrent,
       weightedExperienceClaims,
       credibilityAdjustedPMPM,
-      projectedPremiumPMPM,
-      requiredPremiumPMPM,
+      projectedPremiumPMPM: postP2SAdjRequiredPMPM,
+      requiredPremiumPMPM: requiredPremiumPMPM,
       rateAction
     };
   }
@@ -851,5 +908,84 @@ export class BCBSCalculator {
     });
     
     return completeness / totalChecks;
+  }
+
+  private addHeaderSteps(
+    calculations: BCBSCalculationStep[],
+    planParams: BCBSPlanParameters,
+    planData: BCBSPlanData
+  ): void {
+    // Line 1: Experience Period / Enrollment Period
+    calculations.push({
+      lineNumber: '1',
+      description: 'Experience Period / Enrollment Period',
+      formula: 'Period dates for experience and enrollment',
+      inputs: {
+        currentPeriod: '2/23 - 1/24',
+        renewalPeriod: '2/24 - 1/25'
+      },
+      result: 0,
+      unit: 'period',
+      section: 'total'
+    });
+
+    // Line 2: Member Months Total
+    calculations.push({
+      lineNumber: '2',
+      description: 'Member Months Total',
+      formula: 'Total member months per period',
+      inputs: {
+        current: planData.memberMonths.currentTotal,
+        renewal: planData.memberMonths.renewalTotal
+      },
+      result: planData.memberMonths.currentTotal,
+      unit: 'member_months',
+      section: 'total'
+    });
+
+    // Line 2a: Projected Total Monthly Members
+    calculations.push({
+      lineNumber: '2a',
+      description: 'Projected Total Monthly Mbrs.',
+      formula: 'Average monthly members',
+      inputs: {
+        current: planData.memberMonths.projectedMonthlyMembers.current,
+        renewal: planData.memberMonths.projectedMonthlyMembers.renewal
+      },
+      result: planData.memberMonths.projectedMonthlyMembers.current,
+      unit: 'members',
+      section: 'total'
+    });
+  }
+
+  private consolidateCalculations(individualPlans: BCBSPlanResult[]): any[] {
+    // Consolidate all calculation steps from all plans
+    const allSteps: any[] = [];
+    
+    individualPlans.forEach((plan, index) => {
+      plan.calculations.forEach(step => {
+        allSteps.push({
+          ...step,
+          planIndex: index,
+          planName: plan.planName
+        });
+      });
+    });
+    
+    return allSteps;
+  }
+
+  private consolidateIntermediateResults(individualPlans: BCBSPlanResult[]): any {
+    // Create consolidated intermediate results
+    return {
+      planResults: individualPlans.map(plan => plan.intermediateResults),
+      totalPlans: individualPlans.length,
+      averageProjectedPMPM: individualPlans.reduce((sum, plan) => 
+        sum + plan.intermediateResults.totalProjectedPMPM, 0) / individualPlans.length
+    };
+  }
+
+  private calculateAverageCredibility(plans: BCBSPlanParameters[]): number {
+    return plans.reduce((sum, plan) => sum + plan.credibilityFactor, 0) / plans.length;
   }
 } 

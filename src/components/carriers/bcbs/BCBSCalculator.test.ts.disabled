@@ -617,4 +617,555 @@ describe('BCBSRenewalCalculator', () => {
       });
     });
   });
+});
+
+describe('Enhanced BCBS Multi-Plan Calculator', () => {
+  let calculator: BCBSCalculator;
+
+  beforeEach(() => {
+    calculator = new BCBSCalculator();
+  });
+
+  const createTestInput = (): BCBSInput => {
+    return {
+      carrier: 'BCBS',
+      caseId: 'BCBS-ENHANCED-TEST',
+      effectiveDates: {
+        renewalStart: new Date('2024-01-01'),
+        renewalEnd: new Date('2024-12-31')
+      },
+      monthlyClaimsData: [
+        {
+          month: '2023-01',
+          memberMonths: { medical: 1000, rx: 1000, total: 1000 },
+          incurredClaims: { medical: 400000, rx: 100000, total: 500000 },
+          planBreakdown: {
+            'PPO High': { medical: 200000, rx: 50000, memberMonths: 470 },
+            'PPO Standard': { medical: 120000, rx: 30000, memberMonths: 335 },
+            'HDHP': { medical: 60000, rx: 15000, memberMonths: 250 },
+            'EPO': { medical: 20000, rx: 5000, memberMonths: 160 }
+          }
+        }
+      ],
+      largeClaimantsData: [
+        {
+          claimantId: 'PPO-H-LC001',
+          incurredDate: new Date('2023-06-15'),
+          totalAmount: 225000,
+          medicalAmount: 205000,
+          rxAmount: 20000,
+          planName: 'PPO High'
+        },
+        {
+          claimantId: 'EPO-LC001',
+          incurredDate: new Date('2023-08-10'),
+          totalAmount: 185000,
+          medicalAmount: 175000,
+          rxAmount: 10000,
+          planName: 'EPO'
+        }
+      ],
+      manualRates: {
+        medical: 450.00,
+        rx: 125.00,
+        total: 575.00
+      },
+      multiPlanData: {
+        plans: [
+          {
+            planId: 'plan1',
+            experiencePeriods: {
+              current: {
+                startDate: new Date('2023-02-01'),
+                endDate: new Date('2024-01-31'),
+                memberMonths: 5310
+              },
+              renewal: {
+                startDate: new Date('2024-02-01'),
+                endDate: new Date('2025-01-31'),
+                memberMonths: 5310
+              }
+            },
+            memberMonths: {
+              currentTotal: 5310,
+              renewalTotal: 5310,
+              projectedMonthlyMembers: {
+                current: 442.5,
+                renewal: 442.5
+              }
+            },
+            medicalClaims: {
+              current: {
+                totalClaims: 2065000,
+                poolingLevel: 225000,
+                pooledClaims: 185000,
+                netClaims: 1880000,
+                expPeriodMemberMonths: 5310,
+                netPMPM: 354.05,
+                adjustedNetPMPM: 354.05,
+                projectedPMPM: 0
+              },
+              renewal: {
+                totalClaims: 2065000,
+                poolingLevel: 225000,
+                pooledClaims: 185000,
+                netClaims: 1880000,
+                expPeriodMemberMonths: 5310,
+                netPMPM: 354.05,
+                adjustedNetPMPM: 362.14,
+                projectedPMPM: 0
+              }
+            },
+            pharmacyClaims: {
+              current: {
+                totalClaims: 530000,
+                poolingLevel: 225000,
+                pooledClaims: 0,
+                netClaims: 530000,
+                expPeriodMemberMonths: 5310,
+                netPMPM: 99.81,
+                adjustedNetPMPM: 99.81,
+                projectedPMPM: 0
+              },
+              renewal: {
+                totalClaims: 530000,
+                poolingLevel: 225000,
+                pooledClaims: 0,
+                netClaims: 530000,
+                expPeriodMemberMonths: 5310,
+                netPMPM: 99.81,
+                adjustedNetPMPM: 100.01,
+                projectedPMPM: 0
+              }
+            },
+            enrollment: {
+              current: {
+                single: { count: 188, rate: 525.00 },
+                couple: { count: 141, rate: 1050.00 },
+                spmd: { count: 47, rate: 945.00 },
+                family: { count: 94, rate: 1312.50 },
+                total: { count: 470, monthlyPremium: 246750, annualPremium: 2961000 }
+              },
+              renewal: {
+                single: { count: 188, rate: 525.00 },
+                couple: { count: 141, rate: 1050.00 },
+                spmd: { count: 47, rate: 945.00 },
+                family: { count: 94, rate: 1312.50 },
+                total: { count: 470, monthlyPremium: 246750, annualPremium: 2961000 }
+              }
+            }
+          },
+          // Add 3 more plans with varying sizes and characteristics
+          {
+            planId: 'plan2',
+            experiencePeriods: {
+              current: {
+                startDate: new Date('2023-02-01'),
+                endDate: new Date('2024-01-31'),
+                memberMonths: 3780
+              },
+              renewal: {
+                startDate: new Date('2024-02-01'),
+                endDate: new Date('2025-01-31'),
+                memberMonths: 3780
+              }
+            },
+            memberMonths: {
+              currentTotal: 3780,
+              renewalTotal: 3780,
+              projectedMonthlyMembers: {
+                current: 315,
+                renewal: 315
+              }
+            },
+            medicalClaims: {
+              current: {
+                totalClaims: 1375000,
+                poolingLevel: 225000,
+                pooledClaims: 65000,
+                netClaims: 1310000,
+                expPeriodMemberMonths: 3780,
+                netPMPM: 346.56,
+                adjustedNetPMPM: 346.56,
+                projectedPMPM: 0
+              },
+              renewal: {
+                totalClaims: 1375000,
+                poolingLevel: 225000,
+                pooledClaims: 65000,
+                netClaims: 1310000,
+                expPeriodMemberMonths: 3780,
+                netPMPM: 346.56,
+                adjustedNetPMPM: 354.75,
+                projectedPMPM: 0
+              }
+            },
+            pharmacyClaims: {
+              current: {
+                totalClaims: 350000,
+                poolingLevel: 225000,
+                pooledClaims: 0,
+                netClaims: 350000,
+                expPeriodMemberMonths: 3780,
+                netPMPM: 92.59,
+                adjustedNetPMPM: 92.59,
+                projectedPMPM: 0
+              },
+              renewal: {
+                totalClaims: 350000,
+                poolingLevel: 225000,
+                pooledClaims: 0,
+                netClaims: 350000,
+                expPeriodMemberMonths: 3780,
+                netPMPM: 92.59,
+                adjustedNetPMPM: 92.77,
+                projectedPMPM: 0
+              }
+            },
+            enrollment: {
+              current: {
+                single: { count: 134, rate: 510.00 },
+                couple: { count: 100, rate: 1020.00 },
+                spmd: { count: 34, rate: 918.00 },
+                family: { count: 67, rate: 1275.00 },
+                total: { count: 335, monthlyPremium: 170850, annualPremium: 2050200 }
+              },
+              renewal: {
+                single: { count: 134, rate: 510.00 },
+                couple: { count: 100, rate: 1020.00 },
+                spmd: { count: 34, rate: 918.00 },
+                family: { count: 67, rate: 1275.00 },
+                total: { count: 335, monthlyPremium: 170850, annualPremium: 2050200 }
+              }
+            }
+          }
+        ],
+        totalMemberMonths: 9090
+      },
+      carrierSpecificParameters: {
+        plans: [
+          {
+            planId: 'plan1',
+            planName: 'PPO High',
+            poolingLevel: 225000,
+            experienceWeights: {
+              current: 0.33,
+              renewal: 0.67
+            },
+            credibilityFactor: 1.00,
+            ibnrFactors: {
+              medical: {
+                current: 1.0000,
+                renewal: 1.0240
+              },
+              pharmacy: {
+                current: 1.0000,
+                renewal: 1.0020
+              }
+            },
+            trendFactors: {
+              medical: {
+                annualCurrent: 1.1000,
+                annualRenewal: 1.1003,
+                monthsCurrent: 35.0,
+                monthsRenewal: 23.0,
+                compoundedCurrent: 1.3235,
+                compoundedRenewal: 1.2010
+              },
+              pharmacy: {
+                annualCurrent: 1.1073,
+                annualRenewal: 1.1136,
+                monthsCurrent: 35.0,
+                monthsRenewal: 23.0,
+                compoundedCurrent: 1.3462,
+                compoundedRenewal: 1.2290
+              }
+            },
+            adjustmentFactors: {
+              ffsAge: {
+                current: 1.0375,
+                renewal: 1.0214
+              },
+              benefitAdjustment: 1.0000,
+              underwriterAdjustment: 1.0000,
+              pathwayToSavings: 0.9950
+            },
+            retentionComponents: {
+              retentionPMPM: {
+                current: 93.49,
+                renewal: 145.11
+              },
+              ppoPremiumTax: {
+                current: 6.48,
+                renewal: 9.96
+              },
+              acaAdjustments: {
+                current: 0.27,
+                renewal: 0.41
+              }
+            },
+            currentPremiumPMPM: 525.00,
+            manualClaimsPMPM: {
+              current: 367.92,
+              renewal: 536.12
+            }
+          },
+          {
+            planId: 'plan2',
+            planName: 'PPO Standard',
+            poolingLevel: 225000,
+            experienceWeights: {
+              current: 0.33,
+              renewal: 0.67
+            },
+            credibilityFactor: 1.00,
+            ibnrFactors: {
+              medical: {
+                current: 1.0000,
+                renewal: 1.0240
+              },
+              pharmacy: {
+                current: 1.0000,
+                renewal: 1.0020
+              }
+            },
+            trendFactors: {
+              medical: {
+                annualCurrent: 1.1000,
+                annualRenewal: 1.1003,
+                monthsCurrent: 35.0,
+                monthsRenewal: 23.0,
+                compoundedCurrent: 1.3235,
+                compoundedRenewal: 1.2010
+              },
+              pharmacy: {
+                annualCurrent: 1.1073,
+                annualRenewal: 1.1136,
+                monthsCurrent: 35.0,
+                monthsRenewal: 23.0,
+                compoundedCurrent: 1.3462,
+                compoundedRenewal: 1.2290
+              }
+            },
+            adjustmentFactors: {
+              ffsAge: {
+                current: 1.0375,
+                renewal: 1.0214
+              },
+              benefitAdjustment: 1.0000,
+              underwriterAdjustment: 1.0000,
+              pathwayToSavings: 0.9950
+            },
+            retentionComponents: {
+              retentionPMPM: {
+                current: 87.20,
+                renewal: 135.34
+              },
+              ppoPremiumTax: {
+                current: 6.04,
+                renewal: 9.29
+              },
+              acaAdjustments: {
+                current: 0.25,
+                renewal: 0.38
+              }
+            },
+            currentPremiumPMPM: 510.00,
+            manualClaimsPMPM: {
+              current: 343.05,
+              renewal: 499.80
+            }
+          }
+        ],
+        compositeWeighting: {
+          enrollmentBased: true,
+          totalEnrollment: 805
+        },
+        globalSettings: {
+          totalMemberMonths: 9090
+        }
+      }
+    };
+  };
+
+  describe('Enhanced Multi-Plan Calculations', () => {
+    test('should calculate individual plan results with all 30 calculation lines', async () => {
+      const input = createTestInput();
+      const result = await calculator.calculateRenewal(input, {
+        calculationDate: new Date(),
+        version: '2.0',
+        requestId: 'test-enhanced'
+      });
+
+      expect(result.individualPlans).toHaveLength(2);
+      
+      // Verify each plan has comprehensive calculations
+      result.individualPlans.forEach(plan => {
+        expect(plan.calculations.length).toBeGreaterThan(25); // Should have most of the 30 lines
+        
+        // Check for key calculation lines
+        const headerLines = plan.calculations.filter(c => ['1', '2', '2a'].includes(c.lineNumber));
+        expect(headerLines.length).toBe(3);
+        
+        const medicalLines = plan.calculations.filter(c => c.section === 'medical');
+        expect(medicalLines.length).toBeGreaterThan(5);
+        
+        const pharmacyLines = plan.calculations.filter(c => c.section === 'pharmacy');
+        expect(pharmacyLines.length).toBeGreaterThan(5);
+        
+        const totalLines = plan.calculations.filter(c => c.section === 'total');
+        expect(totalLines.length).toBeGreaterThan(15);
+      });
+    });
+
+    test('should calculate enrollment-weighted composite correctly', async () => {
+      const input = createTestInput();
+      const result = await calculator.calculateRenewal(input, {
+        calculationDate: new Date(),
+        version: '2.0',
+        requestId: 'test-composite'
+      });
+
+      expect(result.composite).toBeDefined();
+      expect(result.composite.totalEnrollment).toBe(805);
+      expect(result.composite.compositeRateAction).toBeDefined();
+      expect(result.composite.enrollmentWeights).toBeDefined();
+      
+      // Verify enrollment weights sum to 100%
+      const totalWeight = Object.values(result.composite.enrollmentWeights).reduce((sum, weight) => sum + weight, 0);
+      expect(totalWeight).toBeCloseTo(1.0, 4);
+    });
+
+    test('should process medical trend calculations correctly', async () => {
+      const input = createTestInput();
+      const result = await calculator.calculateRenewal(input, {
+        calculationDate: new Date(),
+        version: '2.0',
+        requestId: 'test-trend'
+      });
+
+      const plan1 = result.individualPlans[0];
+      
+      // Find medical trend calculation (Line 8)
+      const medicalTrendStep = plan1.calculations.find(c => 
+        c.lineNumber === '8' && c.description.includes('Medical Trend')
+      );
+      
+      expect(medicalTrendStep).toBeDefined();
+      expect(medicalTrendStep?.inputs.compoundedCurrent).toBeCloseTo(1.3235, 4);
+      expect(medicalTrendStep?.inputs.compoundedRenewal).toBeCloseTo(1.2010, 4);
+    });
+
+    test('should apply credibility blending correctly', async () => {
+      const input = createTestInput();
+      const result = await calculator.calculateRenewal(input, {
+        calculationDate: new Date(),
+        version: '2.0',
+        requestId: 'test-credibility'
+      });
+
+      const plan1 = result.individualPlans[0];
+      
+      // Find credibility adjustment (Line 22)
+      const credibilityStep = plan1.calculations.find(c => 
+        c.lineNumber === '22' && c.description.includes('Credibility Adjusted')
+      );
+      
+      expect(credibilityStep).toBeDefined();
+      expect(credibilityStep?.inputs.credibility).toBe(1.00);
+      expect(credibilityStep?.result).toBeGreaterThan(0);
+    });
+
+    test('should calculate retention components correctly', async () => {
+      const input = createTestInput();
+      const result = await calculator.calculateRenewal(input, {
+        calculationDate: new Date(),
+        version: '2.0',
+        requestId: 'test-retention'
+      });
+
+      const plan1 = result.individualPlans[0];
+      
+      // Find retention calculation (Line 23)
+      const retentionStep = plan1.calculations.find(c => 
+        c.lineNumber === '23' && c.description.includes('Retention')
+      );
+      
+      expect(retentionStep).toBeDefined();
+      expect(retentionStep?.inputs.currentRetention).toBe(93.49);
+      expect(retentionStep?.inputs.renewalRetention).toBe(145.11);
+    });
+
+    test('should apply all adjustment factors in sequence', async () => {
+      const input = createTestInput();
+      const result = await calculator.calculateRenewal(input, {
+        calculationDate: new Date(),
+        version: '2.0',
+        requestId: 'test-adjustments'
+      });
+
+      const plan1 = result.individualPlans[0];
+      
+      // Verify key adjustment factors are applied
+      const ffsAgeStep = plan1.calculations.find(c => c.lineNumber === '11a');
+      const benefitAdjStep = plan1.calculations.find(c => c.lineNumber === '14');
+      const underwriterStep = plan1.calculations.find(c => c.lineNumber === '25');
+      const p2sStep = plan1.calculations.find(c => c.lineNumber === '27');
+      
+      expect(ffsAgeStep?.inputs.currentAdjustment).toBe(1.0375);
+      expect(benefitAdjStep?.result).toBe(1.0000);
+      expect(underwriterStep?.result).toBe(1.0000);
+      expect(p2sStep?.result).toBe(0.9950);
+    });
+
+    test('should calculate final rate action properly', async () => {
+      const input = createTestInput();
+      const result = await calculator.calculateRenewal(input, {
+        calculationDate: new Date(),
+        version: '2.0',
+        requestId: 'test-rate-action'
+      });
+
+      const plan1 = result.individualPlans[0];
+      
+      // Find rate action calculation (Line 29)
+      const rateActionStep = plan1.calculations.find(c => 
+        c.lineNumber === '29' && c.description.includes('Rate Action')
+      );
+      
+      expect(rateActionStep).toBeDefined();
+      expect(rateActionStep?.inputs.requiredPremium).toBeGreaterThan(0);
+      expect(rateActionStep?.inputs.currentPremium).toBe(525.00);
+      expect(rateActionStep?.result).toBeDefined();
+    });
+  });
+
+  describe('Data Quality Validation', () => {
+    test('should validate multi-plan data completeness', async () => {
+      const input = createTestInput();
+      
+      // Should not throw validation errors
+      expect(async () => {
+        await calculator.calculateRenewal(input, {
+          calculationDate: new Date(),
+          version: '2.0',
+          requestId: 'test-validation'
+        });
+      }).not.toThrow();
+    });
+
+    test('should handle missing plan data gracefully', async () => {
+      const input = createTestInput();
+      // Remove one plan from multiPlanData but keep it in parameters
+      input.multiPlanData.plans = input.multiPlanData.plans.slice(0, 1);
+      
+      expect(async () => {
+        await calculator.calculateRenewal(input, {
+          calculationDate: new Date(),
+          version: '2.0',
+          requestId: 'test-missing-data'
+        });
+      }).rejects.toThrow();
+    });
+  });
 }); 

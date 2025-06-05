@@ -166,7 +166,7 @@ function mapToUniversalInput(data: any[], carrier: string): UniversalInput {
   if (isMultiPlan) {
     // Group data by plan first
     const planNames = Array.from(new Set(data.filter(row => row.planName).map(row => row.planName)));
-    console.log('Found BCBS plans:', planNames);
+    console.log('🏥 Found BCBS plans:', planNames);
     
     // For multi-plan, aggregate all plans' monthly data
     const monthlyDataByMonth = new Map<string, {
@@ -182,6 +182,8 @@ function mapToUniversalInput(data: any[], carrier: string): UniversalInput {
       const planMonthlyData = data.filter(row => 
         row.planName === planName && row.Month && row['Medical Claims'] !== undefined
       );
+      
+      console.log(`📊 Processing ${planName}: ${planMonthlyData.length} months of data`);
       
       planMonthlyData.forEach(row => {
         const parsedDate = parseExcelDate(row.Month);
@@ -210,6 +212,11 @@ function mapToUniversalInput(data: any[], carrier: string): UniversalInput {
           rx: rxClaims,
           memberMonths: memberMonths
         };
+        
+        // Log sample data for debugging
+        if (monthString === '2023-01') {
+          console.log(`📝 Sample ${planName} Jan 2023: Medical=$${medicalClaims.toLocaleString()}, Rx=$${rxClaims.toLocaleString()}, MM=${memberMonths}`);
+        }
       });
     });
     
@@ -232,7 +239,8 @@ function mapToUniversalInput(data: any[], carrier: string): UniversalInput {
         planBreakdown: monthData.planBreakdown
       }));
     
-    console.log('Processed multi-plan monthly data:', monthlyClaimsData.length, 'months');
+    console.log(`✅ Processed multi-plan monthly data: ${monthlyClaimsData.length} months`);
+    console.log('📈 Sample aggregated data:', monthlyClaimsData.slice(0, 2));
   } else {
     // Standard single-plan processing
     monthlyClaimsData = data

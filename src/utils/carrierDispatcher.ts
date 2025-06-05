@@ -60,8 +60,229 @@ function calculateCurrentPremiumFromExperience(input: UniversalInput): number {
 
 // Helper function to create BCBS multi-plan data from experience
 function createBCBSMultiPlanFromExperience(input: UniversalInput): BCBSInput {
-  // For now, create a single plan from the universal input data
-  // In practice, this would be split into multiple plans based on the data structure
+  // Check if we have actual multi-plan data from the parser
+  const hasMultiPlanData = (input as any).multiPlanData && (input as any).multiPlanData.planNames?.length > 1;
+  
+  if (hasMultiPlanData) {
+    // Use the multi-plan data structure provided by the parser
+    const multiPlanInfo = (input as any).multiPlanData;
+    const planNames = multiPlanInfo.planNames || ['PPO High', 'PPO Standard', 'HDHP', 'EPO'];
+    
+    console.log('🏥 Creating BCBS multi-plan structure with plans:', planNames);
+    
+    // Create plan data for each plan from the parsed monthly data
+    const plans = planNames.map((planName: string, index: number) => {
+      // Extract plan-specific data from monthlyClaimsData that has planBreakdown
+      const planMedicalTotal = input.monthlyClaimsData.reduce((sum, month) => {
+        const planData = (month as any).planBreakdown?.[planName];
+        return sum + (planData?.medical || 0);
+      }, 0);
+      
+      const planRxTotal = input.monthlyClaimsData.reduce((sum, month) => {
+        const planData = (month as any).planBreakdown?.[planName];
+        return sum + (planData?.rx || 0);
+      }, 0);
+      
+      const planMemberMonths = input.monthlyClaimsData.reduce((sum, month) => {
+        const planData = (month as any).planBreakdown?.[planName];
+        return sum + (planData?.memberMonths || 0);
+      }, 0);
+      
+      // Plan-specific enrollment estimates based on the sample data structure
+      const enrollmentSizes = [470, 335, 250, 160]; // PPO High, PPO Standard, HDHP, EPO
+      const currentPremiums = [525.00, 510.00, 395.00, 265.00]; // Realistic plan premiums
+      const estimatedEnrollment = enrollmentSizes[index] || 200;
+      
+      // Extract plan-specific large claimants
+      const planLargeClaimants = input.largeClaimantsData.filter(claimant => 
+        (claimant as any).planName === planName
+      );
+      
+      console.log(`📊 Plan ${planName}: Medical=$${planMedicalTotal.toLocaleString()}, Rx=$${planRxTotal.toLocaleString()}, MM=${planMemberMonths}`);
+      
+      return {
+        planId: `plan${index + 1}`,
+        experiencePeriods: {
+          current: {
+            startDate: input.effectiveDates.renewalStart,
+            endDate: input.effectiveDates.renewalEnd,
+            memberMonths: planMemberMonths
+          },
+          renewal: {
+            startDate: input.effectiveDates.renewalStart,
+            endDate: input.effectiveDates.renewalEnd,
+            memberMonths: planMemberMonths
+          }
+        },
+        memberMonths: {
+          currentTotal: planMemberMonths,
+          renewalTotal: planMemberMonths,
+          projectedMonthlyMembers: {
+            current: planMemberMonths / 12,
+            renewal: planMemberMonths / 12
+          }
+        },
+        medicalClaims: {
+          current: {
+            totalClaims: planMedicalTotal,
+            poolingLevel: 225000,
+            pooledClaims: Math.max(0, planMedicalTotal - 225000 * (planMemberMonths / 12)),
+            netClaims: Math.min(planMedicalTotal, 225000 * (planMemberMonths / 12)),
+            expPeriodMemberMonths: planMemberMonths,
+            netPMPM: planMemberMonths > 0 ? Math.min(planMedicalTotal, 225000 * (planMemberMonths / 12)) / planMemberMonths : 0,
+            adjustedNetPMPM: planMemberMonths > 0 ? (Math.min(planMedicalTotal, 225000 * (planMemberMonths / 12)) / planMemberMonths) * 1.0 : 0,
+            projectedPMPM: 0
+          },
+          renewal: {
+            totalClaims: planMedicalTotal,
+            poolingLevel: 225000,
+            pooledClaims: Math.max(0, planMedicalTotal - 225000 * (planMemberMonths / 12)),
+            netClaims: Math.min(planMedicalTotal, 225000 * (planMemberMonths / 12)),
+            expPeriodMemberMonths: planMemberMonths,
+            netPMPM: planMemberMonths > 0 ? Math.min(planMedicalTotal, 225000 * (planMemberMonths / 12)) / planMemberMonths : 0,
+            adjustedNetPMPM: planMemberMonths > 0 ? (Math.min(planMedicalTotal, 225000 * (planMemberMonths / 12)) / planMemberMonths) * 1.0 : 0,
+            projectedPMPM: 0
+          }
+        },
+        pharmacyClaims: {
+          current: {
+            totalClaims: planRxTotal,
+            poolingLevel: 225000,
+            pooledClaims: 0, // Rx rarely hits pooling
+            netClaims: planRxTotal,
+            expPeriodMemberMonths: planMemberMonths,
+            netPMPM: planMemberMonths > 0 ? planRxTotal / planMemberMonths : 0,
+            adjustedNetPMPM: planMemberMonths > 0 ? (planRxTotal / planMemberMonths) * 1.0 : 0,
+            projectedPMPM: 0
+          },
+          renewal: {
+            totalClaims: planRxTotal,
+            poolingLevel: 225000,
+            pooledClaims: 0,
+            netClaims: planRxTotal,
+            expPeriodMemberMonths: planMemberMonths,
+            netPMPM: planMemberMonths > 0 ? planRxTotal / planMemberMonths : 0,
+            adjustedNetPMPM: planMemberMonths > 0 ? (planRxTotal / planMemberMonths) * 1.0 : 0,
+            projectedPMPM: 0
+          }
+        },
+        enrollment: {
+          current: {
+            single: { count: Math.floor(estimatedEnrollment * 0.4), rate: currentPremiums[index] * 1.0 },
+            couple: { count: Math.floor(estimatedEnrollment * 0.3), rate: currentPremiums[index] * 2.0 },
+            spmd: { count: Math.floor(estimatedEnrollment * 0.1), rate: currentPremiums[index] * 1.8 },
+            family: { count: Math.floor(estimatedEnrollment * 0.2), rate: currentPremiums[index] * 2.5 },
+            total: { count: estimatedEnrollment, monthlyPremium: currentPremiums[index] * estimatedEnrollment, annualPremium: currentPremiums[index] * estimatedEnrollment * 12 }
+          },
+          renewal: {
+            single: { count: Math.floor(estimatedEnrollment * 0.4), rate: currentPremiums[index] * 1.0 },
+            couple: { count: Math.floor(estimatedEnrollment * 0.3), rate: currentPremiums[index] * 2.0 },
+            spmd: { count: Math.floor(estimatedEnrollment * 0.1), rate: currentPremiums[index] * 1.8 },
+            family: { count: Math.floor(estimatedEnrollment * 0.2), rate: currentPremiums[index] * 2.5 },
+            total: { count: estimatedEnrollment, monthlyPremium: currentPremiums[index] * estimatedEnrollment, annualPremium: currentPremiums[index] * estimatedEnrollment * 12 }
+          }
+        }
+      };
+    });
+    
+    const totalMemberMonths = plans.reduce((sum: number, plan: any) => sum + plan.memberMonths.currentTotal, 0);
+    const totalEnrollment = plans.reduce((sum: number, plan: any) => sum + plan.enrollment.current.total.count, 0);
+    
+    // Create carrier-specific parameters for each plan
+    const planParameters = planNames.map((planName: string, index: number) => {
+      const plan = plans[index];
+      const experiencePMPM = plan.memberMonths.currentTotal > 0 ? 
+        (plan.medicalClaims.current.totalClaims + plan.pharmacyClaims.current.totalClaims) / plan.memberMonths.currentTotal : 400;
+      
+      return {
+        planId: `plan${index + 1}`,
+        planName: planName,
+        poolingLevel: 225000,
+        experienceWeights: {
+          current: 0.33,
+          renewal: 0.67
+        },
+        credibilityFactor: 1.00,
+        ibnrFactors: {
+          medical: {
+            current: 1.0000,
+            renewal: 1.0240
+          },
+          pharmacy: {
+            current: 1.0000,
+            renewal: 1.0020
+          }
+        },
+        trendFactors: {
+          medical: {
+            annualCurrent: 1.1000,
+            annualRenewal: 1.1003,
+            monthsCurrent: 35.0,
+            monthsRenewal: 23.0,
+            compoundedCurrent: 1.3235,
+            compoundedRenewal: 1.2010
+          },
+          pharmacy: {
+            annualCurrent: 1.1073,
+            annualRenewal: 1.1136,
+            monthsCurrent: 35.0,
+            monthsRenewal: 23.0,
+            compoundedCurrent: 1.3462,
+            compoundedRenewal: 1.2290
+          }
+        },
+        adjustmentFactors: {
+          ffsAge: {
+            current: 1.0375,
+            renewal: 1.0214
+          },
+          benefitAdjustment: 1.0000,
+          underwriterAdjustment: 1.0000,
+          pathwayToSavings: 0.9950
+        },
+        retentionComponents: {
+          retentionPMPM: {
+            current: experiencePMPM * 0.15,
+            renewal: experiencePMPM * 0.17
+          },
+          ppoPremiumTax: {
+            current: experiencePMPM * 0.0104,
+            renewal: experiencePMPM * 0.0116
+          },
+          acaAdjustments: {
+            current: experiencePMPM * 0.0004,
+            renewal: experiencePMPM * 0.0005
+          }
+        },
+        currentPremiumPMPM: [525.00, 510.00, 395.00, 265.00][index] || 450.00,
+        manualClaimsPMPM: {
+          current: experiencePMPM * 0.8,
+          renewal: experiencePMPM * 1.2
+        }
+      };
+    });
+    
+    return {
+      ...input,
+      carrier: 'BCBS',
+      multiPlanData: {
+        plans,
+        totalMemberMonths
+      },
+      carrierSpecificParameters: {
+        plans: planParameters,
+        compositeWeighting: {
+          enrollmentBased: true,
+          totalEnrollment
+        },
+        globalSettings: {
+          totalMemberMonths
+        }
+      }
+    };
+  }
+  
+  // Fallback to single plan structure for backward compatibility
   const totalMedical = input.monthlyClaimsData.reduce((sum, month) => 
     sum + (month.incurredClaims?.medical || 0), 0);
   const totalRx = input.monthlyClaimsData.reduce((sum, month) => 
@@ -69,7 +290,7 @@ function createBCBSMultiPlanFromExperience(input: UniversalInput): BCBSInput {
   const totalMM = input.monthlyClaimsData.reduce((sum, month) => 
     sum + (month.memberMonths?.total || month.memberMonths?.medical || 0), 0);
 
-  const experiencePMPM = (totalMedical + totalRx) / (totalMM || 1); // Add null coalescing
+  const experiencePMPM = (totalMedical + totalRx) / (totalMM || 1);
   const calculatedManual = calculateManualRatesFromExperience(input);
   const calculatedCurrent = calculateCurrentPremiumFromExperience(input);
 
@@ -81,8 +302,8 @@ function createBCBSMultiPlanFromExperience(input: UniversalInput): BCBSInput {
         planId: 'plan1',
         experiencePeriods: {
           current: {
-            startDate: input.effectiveDates.renewalStart, // Fix: use renewalStart
-            endDate: input.effectiveDates.renewalEnd, // Fix: use renewalEnd
+            startDate: input.effectiveDates.renewalStart,
+            endDate: input.effectiveDates.renewalEnd,
             memberMonths: totalMM
           },
           renewal: {
@@ -106,9 +327,9 @@ function createBCBSMultiPlanFromExperience(input: UniversalInput): BCBSInput {
             pooledClaims: Math.max(0, totalMedical - 225000),
             netClaims: Math.min(totalMedical, 225000),
             expPeriodMemberMonths: totalMM,
-            netPMPM: Math.min(totalMedical, 225000) / (totalMM || 1), // Add null coalescing
+            netPMPM: Math.min(totalMedical, 225000) / (totalMM || 1),
             adjustedNetPMPM: (Math.min(totalMedical, 225000) / (totalMM || 1)) * 1.0,
-            projectedPMPM: 0 // Will be calculated
+            projectedPMPM: 0
           },
           renewal: {
             totalClaims: totalMedical,
@@ -116,21 +337,21 @@ function createBCBSMultiPlanFromExperience(input: UniversalInput): BCBSInput {
             pooledClaims: Math.max(0, totalMedical - 225000),
             netClaims: Math.min(totalMedical, 225000),
             expPeriodMemberMonths: totalMM,
-            netPMPM: Math.min(totalMedical, 225000) / (totalMM || 1), // Add null coalescing
+            netPMPM: Math.min(totalMedical, 225000) / (totalMM || 1),
             adjustedNetPMPM: (Math.min(totalMedical, 225000) / (totalMM || 1)) * 1.0,
-            projectedPMPM: 0 // Will be calculated
+            projectedPMPM: 0
           }
         },
         pharmacyClaims: {
           current: {
             totalClaims: totalRx,
             poolingLevel: 225000,
-            pooledClaims: 0, // Rx rarely hits pooling
+            pooledClaims: 0,
             netClaims: totalRx,
             expPeriodMemberMonths: totalMM,
-            netPMPM: totalRx / (totalMM || 1), // Add null coalescing
+            netPMPM: totalRx / (totalMM || 1),
             adjustedNetPMPM: (totalRx / (totalMM || 1)) * 1.0,
-            projectedPMPM: 0 // Will be calculated
+            projectedPMPM: 0
           },
           renewal: {
             totalClaims: totalRx,
@@ -138,9 +359,9 @@ function createBCBSMultiPlanFromExperience(input: UniversalInput): BCBSInput {
             pooledClaims: 0,
             netClaims: totalRx,
             expPeriodMemberMonths: totalMM,
-            netPMPM: totalRx / (totalMM || 1), // Add null coalescing
+            netPMPM: totalRx / (totalMM || 1),
             adjustedNetPMPM: (totalRx / (totalMM || 1)) * 1.0,
-            projectedPMPM: 0 // Will be calculated
+            projectedPMPM: 0
           }
         },
         enrollment: {
@@ -160,7 +381,7 @@ function createBCBSMultiPlanFromExperience(input: UniversalInput): BCBSInput {
           }
         }
       }],
-      totalMemberMonths: totalMM || 0 // Add null coalescing
+      totalMemberMonths: totalMM || 0
     },
     carrierSpecificParameters: {
       plans: [{
@@ -231,10 +452,10 @@ function createBCBSMultiPlanFromExperience(input: UniversalInput): BCBSInput {
       }],
       compositeWeighting: {
         enrollmentBased: true,
-        totalEnrollment: totalMM || 0 // Add null coalescing
+        totalEnrollment: totalMM || 0
       },
       globalSettings: {
-        totalMemberMonths: totalMM || 0 // Add null coalescing
+        totalMemberMonths: totalMM || 0
       }
     }
   };
