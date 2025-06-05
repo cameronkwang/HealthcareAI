@@ -1066,40 +1066,42 @@ const ProjectionDashboard: React.FC = () => {
       </div>
 
       {/* Tab Navigation */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6">
+      <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8 pt-4 sm:pt-6">
         <div className="border-b border-gray-200">
-          <nav className="-mb-px flex space-x-8">
+          <nav className="-mb-px flex space-x-4 sm:space-x-8 overflow-x-auto">
             <button
               onClick={() => setActiveTab('main')}
-              className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              className={`py-2 px-1 border-b-2 font-medium text-sm whitespace-nowrap ${
                 activeTab === 'main'
                   ? 'border-blue-500 text-blue-600'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
               }`}
             >
               <div className="flex items-center">
-                <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-1 sm:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
                 </svg>
-                Projections
+                <span className="hidden sm:inline">Projections</span>
+                <span className="sm:hidden">Projections</span>
               </div>
             </button>
             <button
               onClick={() => setActiveTab('audit')}
-              className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              className={`py-2 px-1 border-b-2 font-medium text-sm whitespace-nowrap ${
                 activeTab === 'audit'
                   ? 'border-blue-500 text-blue-600'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
               }`}
             >
               <div className="flex items-center">
-                <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-1 sm:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                 </svg>
-                Data Audit
+                <span className="hidden sm:inline">Data Audit</span>
+                <span className="sm:hidden">Audit</span>
                 {parsedData && (
-                  <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">
-                    {parsedData.largeClaimantsData.length} claimants
+                  <span className="ml-1 sm:ml-2 px-1 sm:px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">
+                    {parsedData.largeClaimantsData.length}
                   </span>
                 )}
               </div>
@@ -1109,36 +1111,36 @@ const ProjectionDashboard: React.FC = () => {
       </div>
 
       {/* Tab Content */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8 py-4 sm:py-6">
         {activeTab === 'main' ? (
           /* Main Projection View */
-          <div className="space-y-8">
+          <div className="space-y-4 sm:space-y-6 lg:space-y-8">
             {/* Step Indicator */}
             <StepIndicator currentStep={getCurrentStep()} />
 
-            {/* Main Grid */}
-            <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
+            {/* Main Grid - Stack on mobile, side-by-side on desktop */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
               {/* Left Column - Data Upload & Configuration */}
-              <div className="xl:col-span-2 space-y-6">
+              <div className="lg:col-span-2 space-y-4 sm:space-y-6">
                 {/* Data Upload Section */}
-                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-                  <div className="flex items-center mb-4">
-                    <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center mr-3">
-                      <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div className="bg-white rounded-lg sm:rounded-xl border border-gray-200 shadow-sm p-4 sm:p-6">
+                  <div className="flex items-center mb-3 sm:mb-4">
+                    <div className="w-6 h-6 sm:w-8 sm:h-8 bg-blue-100 rounded-full flex items-center justify-center mr-2 sm:mr-3">
+                      <svg className="w-3 h-3 sm:w-4 sm:h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
                       </svg>
                     </div>
-                    <h2 className="text-xl font-semibold text-gray-900">Data Upload</h2>
+                    <h2 className="text-lg sm:text-xl font-semibold text-gray-900">Data Upload</h2>
                   </div>
                   <FileUploader onDataParsed={setUploadedData} />
                   
                   {uploadedData.length > 0 && (
-                    <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+                    <div className="mt-4 p-3 sm:p-4 bg-green-50 border border-green-200 rounded-lg">
                       <div className="flex items-center">
-                        <svg className="w-5 h-5 text-green-600 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                        <svg className="w-4 h-4 sm:w-5 sm:h-5 text-green-600 mr-2" fill="currentColor" viewBox="0 0 20 20">
                           <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"></path>
                         </svg>
-                        <span className="text-sm font-medium text-green-800">
+                        <span className="text-xs sm:text-sm font-medium text-green-800">
                           Successfully uploaded {uploadedData.length} rows of data
                         </span>
                       </div>
@@ -1147,14 +1149,14 @@ const ProjectionDashboard: React.FC = () => {
                 </div>
 
                 {/* Carrier Selection */}
-                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-                  <div className="flex items-center mb-4">
-                    <div className="w-8 h-8 bg-purple-100 rounded-full flex items-center justify-center mr-3">
-                      <svg className="w-4 h-4 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div className="bg-white rounded-lg sm:rounded-xl border border-gray-200 shadow-sm p-4 sm:p-6">
+                  <div className="flex items-center mb-3 sm:mb-4">
+                    <div className="w-6 h-6 sm:w-8 sm:h-8 bg-purple-100 rounded-full flex items-center justify-center mr-2 sm:mr-3">
+                      <svg className="w-3 h-3 sm:w-4 sm:h-4 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
                       </svg>
                     </div>
-                    <h2 className="text-xl font-semibold text-gray-900">Insurance Carrier</h2>
+                    <h2 className="text-lg sm:text-xl font-semibold text-gray-900">Insurance Carrier</h2>
                   </div>
                   <CarrierSelector selected={selectedCarrier} onSelect={setSelectedCarrier} />
                 </div>
@@ -1164,29 +1166,29 @@ const ProjectionDashboard: React.FC = () => {
 
                 {/* Error Display */}
                 {error && (
-                  <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+                  <div className="bg-red-50 border border-red-200 rounded-lg sm:rounded-xl p-3 sm:p-4">
                     <div className="flex items-center">
-                      <svg className="w-5 h-5 text-red-600 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                      <svg className="w-4 h-4 sm:w-5 sm:h-5 text-red-600 mr-2" fill="currentColor" viewBox="0 0 20 20">
                         <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd"></path>
                       </svg>
-                      <span className="text-sm font-medium text-red-800">{error}</span>
+                      <span className="text-xs sm:text-sm font-medium text-red-800">{error}</span>
                     </div>
                   </div>
                 )}
               </div>
 
               {/* Right Column - Action Panel */}
-              <div className="space-y-6">
+              <div className="space-y-4 sm:space-y-6">
                 {/* Action Panel */}
-                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 sticky top-8">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Actions</h3>
+                <div className="bg-white rounded-lg sm:rounded-xl border border-gray-200 shadow-sm p-4 sm:p-6 lg:sticky lg:top-8">
+                  <h3 className="text-base sm:text-lg font-semibold text-gray-900 mb-3 sm:mb-4">Actions</h3>
                   
                   <div className="space-y-3">
                     <button 
                       onClick={handleSampleData}
-                      className="w-full px-4 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium transition-colors duration-200 flex items-center justify-center"
+                      className="w-full px-3 sm:px-4 py-2 sm:py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium transition-colors duration-200 flex items-center justify-center text-sm sm:text-base"
                     >
-                      <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="w-3 h-3 sm:w-4 sm:h-4 mr-1 sm:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                       </svg>
                       Load Sample Data
@@ -1196,24 +1198,25 @@ const ProjectionDashboard: React.FC = () => {
                       onClick={handleRunProjection}
                       disabled={!uploadedData.length || !selectedCarrier}
                       className={`
-                        w-full px-4 py-3 rounded-lg font-medium transition-all duration-200 flex items-center justify-center
+                        w-full px-3 sm:px-4 py-2 sm:py-3 rounded-lg font-medium transition-all duration-200 flex items-center justify-center text-sm sm:text-base
                         ${(!uploadedData.length || !selectedCarrier)
                           ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
                           : 'bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white shadow-lg hover:shadow-xl transform hover:-translate-y-0.5'
                         }
                       `}
                     >
-                      <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-1 sm:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
                       </svg>
-                      Run Projection Analysis
+                      <span className="hidden sm:inline">Run Projection Analysis</span>
+                      <span className="sm:hidden">Run Analysis</span>
                     </button>
                   </div>
 
                   {(uploadedData.length > 0 || selectedCarrier) && (
-                    <div className="mt-6 pt-6 border-t border-gray-200">
-                      <h4 className="text-sm font-medium text-gray-900 mb-3">Status Overview</h4>
-                      <div className="space-y-2 text-sm">
+                    <div className="mt-4 sm:mt-6 pt-4 sm:pt-6 border-t border-gray-200">
+                      <h4 className="text-xs sm:text-sm font-medium text-gray-900 mb-2 sm:mb-3">Status Overview</h4>
+                      <div className="space-y-1 sm:space-y-2 text-xs sm:text-sm">
                         <div className="flex items-center justify-between">
                           <span className="text-gray-600">Data Uploaded</span>
                           <span className={uploadedData.length > 0 ? 'text-green-600 font-medium' : 'text-gray-400'}>
@@ -1241,15 +1244,15 @@ const ProjectionDashboard: React.FC = () => {
 
             {/* Results Section */}
             {result && (
-              <div className="mt-8">
-                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-                  <div className="flex items-center mb-6">
-                    <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center mr-3">
-                      <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="mt-6 sm:mt-8">
+                <div className="bg-white rounded-lg sm:rounded-xl border border-gray-200 shadow-sm p-4 sm:p-6">
+                  <div className="flex items-center mb-4 sm:mb-6">
+                    <div className="w-6 h-6 sm:w-8 sm:h-8 bg-green-100 rounded-full flex items-center justify-center mr-2 sm:mr-3">
+                      <svg className="w-3 h-3 sm:w-4 sm:h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
                       </svg>
                     </div>
-                    <h2 className="text-2xl font-bold text-gray-900">Projection Results</h2>
+                    <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Projection Results</h2>
                   </div>
                   {renderTemplate()}
                 </div>

@@ -23,7 +23,7 @@ const LandingPage: React.FC = () => {
       <img
         src={require('../logo.svg').default}
         alt="InsightAI Logo"
-        className="w-32 mt-8 mb-6"
+        className="w-20 sm:w-28 lg:w-32 mt-4 sm:mt-6 lg:mt-8 mb-3 sm:mb-4 lg:mb-6"
         style={{ maxWidth: '140px', height: 'auto' }}
       />
       {/* <Navbar /> */}
